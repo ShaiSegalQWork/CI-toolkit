@@ -1,0 +1,621 @@
+{
+    "basler_camera_processor_service": {
+        "execute": "./camera_processor/build/camera_processor_service",
+        "camera_params": {
+            "cam_type": 0,
+            "width": 1440,
+            "height": 1080,
+            "fps": 200,
+            "exposure": 3000,
+            "gain": 15,
+            "stream": "",
+            "basler_config_file": "./camera_processor/config/pylon_override_conf.pfs"
+        },
+        "export_params": {
+            "filename": "Frames.tar",
+            "image_extension": ".raw",
+            "need_stream": true
+        },
+        "stream_params": {
+            "appsrc_stream": "( appsrc name=mysrc ! videoconvert ! videoscale ! video/x-raw,width=480,height=360 ! x264enc bframes=0 speed-preset=ultrafast tune=zerolatency key-int-max=1 ! video/x-h264,profile=main ! rtph264pay name=pay0 pt=96 )",
+            "rtsp_port": "8554",
+            "mount_point": "/basler",
+            "grayscale": true,
+            "format": "GRAY8"
+        },
+        "output_dir": "frames_buffer",
+        "use_zmq": false,
+        "name": "basler_camera_processor_service",
+        "q_sensor_serial": "N/A"
+    },
+    "pi_camera_processor_service": {
+        "execute": "./camera_processor/build/camera_processor_service",
+        "camera_params": {
+            "cam_type": 1,
+            "width": 1280,
+            "height": 720,
+            "fps": 100,
+            "exposure": 3000,
+            "gain": 16,
+            "device": "/dev/video0",
+            "gst_plugin": "v4l2src device=",
+            "stream": " ! video/x-bayer,format=rggb,width=1280,height=720,framerate=100/1 ! queue ! appsink name=sink sync=false"
+        },
+        "export_params": {
+            "filename": "Frames_v1.0.tar",
+            "image_extension": ".raw",
+            "need_stream": false
+        },
+        "stream_params": {
+            "appsrc_stream": "( appsrc name=mysrc ! nvvidconv flip-method=clockwise ! videoscale ! video/x-raw(memory:NVMM),width=640,height=360 ! nvvidconv ! videobalance brightness=0.5 contrast=1.5 ! nvvidconv ! nvv4l2h264enc bframes=0 speed-preset=ultrafast tune=zerolatency key-int-max=1 ! video/x-h264,profile=main ! rtph264pay name=pay0 pt=96 )",
+            "rtsp_port": "8555",
+            "mount_point": "/pi",
+            "grayscale": true,
+            "format": "GRAY8"
+        },
+        "output_dir": "frames_buffer",
+        "use_zmq": true,
+        "name": "pi_camera_processor_service",
+        "q_sensor_serial": "N/A"
+    },
+    "keyboard_listener_service": {
+        "execute": "python ./keyboard_listener/keyboard_listener_service.py",
+        "enable_debug_qad": false
+    },
+    "tar_to_numpy_service": {
+        "execute": "python ./tar_to_numpy/tar_to_numpy_service.py",
+        "tar_file": "/home/recorder/system/Frames.tar",
+        "output_dir": "frames_buffer",
+        "output_buffer_dir": true,
+        "frame_width": 1280,
+        "frame_height": 720
+    },
+    "signals_metrics_calc_service": {
+        "execute": "python ./signals_metrics_calc/signals_metrics_calc_service.py",
+        "input_dir": "frames_buffer",
+        "delete_buffer": true,
+        "from_tar": false,
+        "metrics_publishing_port": 1240,
+        "q_sensor_version": "v1",
+        "versions": {
+            "v0": {
+                "q_sensor_version": "v0",
+                "frame_width": 1440,
+                "frame_height": 1080,
+                "crop": false,
+                "window_rad": 0
+            },
+            "v1": {
+                "q_sensor_version": "v1",
+                "frame_width": 1280,
+                "frame_height": 720,
+                "crop": true,
+                "window_rad": 286
+            }
+        }
+    },
+    "remote_signals_metrics_calc_service": {
+        "execute": "/home/recorder/new-silent-speech-system/venv/bin/python /home/recorder/new-silent-speech-system/q_cue_andromeda/q_services/signals_metrics_calc/signals_metrics_calc_service.py",
+        "name": "remote_signals_metrics_calc_service",
+        "remote_host": "jrecorder",
+        "input_dir": "frames_buffer",
+        "delete_buffer": true,
+        "from_tar": false,
+        "metrics_publishing_port": 1240,
+        "q_sensor_version": "v1",
+        "versions": {
+            "v0": {
+                "q_sensor_version": "v0",
+                "frame_width": 1440,
+                "frame_height": 1080,
+                "crop": false,
+                "window_rad": 0
+            },
+            "v1": {
+                "q_sensor_version": "v1",
+                "frame_width": 1280,
+                "frame_height": 720,
+                "crop": true,
+                "window_rad": 286
+            }
+        }
+    },
+    "signals_metrics_plotter_service": {
+        "execute": "python ./signals_metrics_plotter/signals_metrics_plotter_service.py",
+        "metrics_publishing_host_ip": "192.168.55.1",
+        "metrics_publishing_port": 1240,
+        "display_time_window_sec": 3,
+        "show_minmax_lines": true,
+        "min_ylim": 0.5,
+        "max_ylim": 1,
+        "gui_fps": 100,
+        "width": 640,
+        "height": 480,
+        "q_sensor_version": "v1",
+        "versions": {
+            "v0": {
+                "q_sensor_version": "v0",
+                "sample_rate": 200
+            },
+            "v1": {
+                "q_sensor_version": "v1",
+                "sample_rate": 100
+            }
+        }
+    },
+    "feature_calc_service": {
+        "execute": "python ./feature_calc/feature_calc_service.py",
+        "input_dir": "frames_buffer",
+        "output_dir": "features_buffer",
+        "delete_buffer": true,
+        "from_tar": false,
+        "use_zmq": true,
+        "q_sensor_version": "v0",
+        "versions": {
+            "v0": {
+                "q_sensor_version": "v0",
+                "frame_width": 1440,
+                "frame_height": 1080,
+                "win_size": 10,
+                "model_path": "/etc/silent-speech/playground/efficientnet_536sess_grid_max_80_10_f32_f16prc_old_aug_20230314_102317"
+            },
+            "v1": {
+                "q_sensor_version": "v1",
+                "frame_width": 1280,
+                "frame_height": 720,
+                "model_path": "/etc/silent-speech/playground/v1_model"
+            }
+        }
+    },
+    "features_saving_service": {
+        "execute": "python ./features_saving/features_saving_service.py",
+        "system_state_machine_service_host_ip": "127.0.0.1",
+        "feature_calc_service_host_ip": "192.168.55.1",
+        "feature_calc_service_pub_port": 1240,
+        "output_filename": "Features_v1.0.npy"
+    },
+    "right_features_saving_service": {
+        "execute": "python ./features_saving/features_saving_service.py",
+        "system_state_machine_service_host_ip": "127.0.0.1",
+        "feature_calc_service_host_ip": "192.168.55.1",
+        "feature_calc_service_pub_port": 1241,
+        "output_filename": "Features_v1.0_right.npy"
+    },
+    "features_viewer_service": {
+        "execute": "python ./features_viewer/features_viewer_service.py",
+        "input_dir": "features_buffer",
+        "waves_live_plot_params": {
+            "on": true,
+            "draw_by_index_period": 10,
+            "display_time_window_sec": 3,
+            "q_sensor_version": "v1",
+            "versions": {
+                "v0": {
+                    "q_sensor_version": "v0",
+                    "features_rows": 9,
+                    "features_columns": 13,
+                    "sample_rate": 200
+                },
+                "v1": {
+                    "q_sensor_version": "v1",
+                    "features_rows": 3,
+                    "features_columns": 9,
+                    "sample_rate": 100
+                }
+            }
+        },
+        "use_zmq": true
+    },
+    "predict_service": {
+        "execute": "python ./predict/predict_service.py",
+        "input_dir": "features_buffer",
+        "delete_buffer": true,
+        "predict_flow": "continuous",
+        "viewer": "graph",
+        "show_probability_in_gui": false,
+        "show_listbox": true,
+        "how_much_to_clip": 0,
+        "floating_labels": true,
+        "max_predictions_to_store": 100,
+        "use_zmq": true,
+        "feature_calc_service_host_ip": "192.168.55.1",
+        "q_sensor_version": "v1",
+        "waves_live_plot_params": {
+            "on": true,
+            "draw_by_index_period": 10,
+            "display_time_window_sec": 3,
+            "q_sensor_version": "v1",
+            "versions": {
+                "v0": {
+                    "q_sensor_version": "v0",
+                    "features_rows": 9,
+                    "features_columns": 13,
+                    "sample_rate": 200
+                },
+                "v1": {
+                    "q_sensor_version": "v1",
+                    "features_rows": 3,
+                    "features_columns": 9,
+                    "sample_rate": 100
+                }
+            }
+        },
+        "versions": {
+            "v0": {
+                "q_sensor_version": "v0",
+                "chunk_size": 180,
+                "chunk_step_size": 30,
+                "model_path": "/etc/silent-speech/playground/efficientnet_536sess_grid_max_80_10_f32_f16prc_old_aug_20230314_102317",
+                "show_timing": false
+            },
+            "v1": {
+                "q_sensor_version": "v1",
+                "chunk_size": 112,
+                "chunk_step_size": 15,
+                "model_path": "/etc/silent-speech/playground/v1_model"
+            }
+        }
+    },
+    "predict_qad_service": {
+        "execute": "python ./predict/predict_service.py",
+        "input_dir": "features_buffer",
+        "delete_buffer": true,
+        "predict_flow": "continuous",
+        "viewer": "qad",
+        "show_listbox": true,
+        "how_much_to_clip": 0,
+        "feature_calc_service_host_ip": "192.168.55.1",
+        "waves_live_plot_params": {
+            "on": true,
+            "draw_by_index_period": 10,
+            "display_time_window_sec": 3,
+            "q_sensor_version": "v0",
+            "versions": {
+                "v0": {
+                    "q_sensor_version": "v0",
+                    "features_rows": 9,
+                    "features_columns": 13,
+                    "sample_rate": 200
+                },
+                "v1": {
+                    "q_sensor_version": "v1",
+                    "features_rows": 3,
+                    "features_columns": 9,
+                    "sample_rate": 100
+                }
+            }
+        },
+        "show_probability_in_gui": false,
+        "floating_labels": true,
+        "max_predictions_to_store": 100,
+        "use_zmq": true,
+        "q_sensor_version": "v1",
+        "versions": {
+            "v0": {
+                "q_sensor_version": "v0",
+                "chunk_size": 180,
+                "chunk_step_size": 30,
+                "model_path": "/etc/silent-speech/playground/efficientnet_536sess_grid_max_80_10_f32_f16prc_old_aug_20230314_102317",
+                "show_timing": false
+            },
+            "v1": {
+                "q_sensor_version": "v1",
+                "chunk_size": 112,
+                "chunk_step_size": 15,
+                "model_path": "/etc/silent-speech/playground/v1_model"
+            }
+        }
+    },
+    "system_state_machine_service": {
+        "execute": "python ./system_state_machine/system_state_machine_service.py",
+        "input_dir": "db",
+        "experiment_dir": "",
+        "remote_experiment_base_dir": "/mnt/jrecorder",
+        "db_filename": "experiment_process.json",
+        "stop_session_timeout": 0.5,
+        "start_experiment_timeout": 0.5,
+        "retry_last_enabled": false,
+        "calibration": false,
+        "skip_groups": false,
+        "use_qad": false,
+        "debug_state_snapshots": false,
+        "open_jira_on_error": true,
+        "jira_user_email": "recordingops@q.ai",
+        "jira_api_key": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "services_to_stop": [
+            "remote_camera_processor_service",
+            "remote_right_camera_processor_service",
+            "gst_audio_service",
+            "tag_recorder_service",
+            "basler_camera_processor_service",
+            "webcam_processor_service",
+            "right_webcam_processor_service",
+            "left_webcam_processor_service",
+            "remote_imu_peripherals_service"
+        ]
+    },
+    "osd_service": {
+        "execute": "python ./osd/osd_service.py",
+        "show_qad": false,
+        "full_screen": false,
+        "instruction_to_color": {
+            "without saying": "#FFE9AD",
+            "loud": "#6AB7C8",
+            "lip": "#97CCD8",
+            "subvocal": "#C4E3E9"
+        }
+    },
+    "signals_videos_osd_service": {
+        "execute": "python ./signals_videos_osd/signals_videos_osd_service.py",
+        "show_fps": false
+    },
+    "webcam_processor_service": {
+        "execute": "./camera_processor/build/camera_processor_service",
+        "camera_params": {
+            "cam_type": 2,
+            "width": 1280,
+            "height": 720,
+            "fps": 30,
+            "exposure": 3000,
+            "gain": 15,
+            "id_type": "bus",
+            "device": "<REPLACE>",
+            "gst_plugin": "v4l2src device=",
+            "stream": " ! image/jpeg,width=1280,height=720,framerate=30/1 ! jpegdec ! videoconvert ! video/x-raw,format=BGR ! appsink name=sink"
+        },
+        "export_params": {
+            "filename": "webcam_video.avi",
+            "image_extension": ".avi",
+            "need_stream": false
+        },
+        "stream_params": {
+            "appsrc_stream": "( appsrc name=mysrc ! videoconvert ! videoscale ! video/x-raw,width=640,height=360 ! x264enc bframes=0 speed-preset=ultrafast tune=zerolatency key-int-max=1 ! video/x-h264,profile=main ! rtph264pay name=pay0 pt=96 )",
+            "rtsp_port": "8556",
+            "mount_point": "/webcam",
+            "grayscale": false,
+            "format": "BGR"
+        },
+        "output_dir": "frames_buffer",
+        "use_zmq": false,
+        "name": "webcam_processor_service"
+    },
+    "right_webcam_processor_service": {
+        "execute": "./camera_processor/build/camera_processor_service",
+        "camera_params": {
+            "cam_type": 2,
+            "width": 1280,
+            "height": 720,
+            "fps": 5,
+            "exposure": 3000,
+            "gain": 15,
+            "id_type": "bus",
+            "device": "usb-0000:00:14.0-4",
+            "gst_plugin": "v4l2src device=",
+            "stream": " ! image/jpeg,width=1280,height=720,framerate=5/1 ! jpegdec ! videoconvert ! video/x-raw,format=BGR ! appsink name=sink"
+        },
+        "export_params": {
+            "filename": "webcam_video_right.avi",
+            "image_extension": ".avi",
+            "need_stream": false,
+            "min_size_bytes": 10240
+        },
+        "stream_params": {
+            "appsrc_stream": "( appsrc name=mysrc ! videoconvert ! videoscale ! video/x-raw,width=640,height=360 ! x264enc bframes=0 speed-preset=ultrafast tune=zerolatency key-int-max=1 ! video/x-h264,profile=main ! rtph264pay name=pay0 pt=96 )",
+            "rtsp_port": "8557",
+            "mount_point": "/webcam_right",
+            "grayscale": false,
+            "format": "BGR"
+        },
+        "output_dir": "frames_buffer",
+        "use_zmq": false,
+        "name": "right_webcam_processor_service"
+    },
+    "left_webcam_processor_service": {
+        "execute": "./camera_processor/build/camera_processor_service",
+        "camera_params": {
+            "cam_type": 2,
+            "width": 1280,
+            "height": 720,
+            "fps": 5,
+            "exposure": 3000,
+            "gain": 15,
+            "id_type": "bus",
+            "device": "<REPLACE>",
+            "gst_plugin": "v4l2src device=",
+            "stream": " ! image/jpeg,width=1280,height=720,framerate=5/1 ! jpegdec ! videoconvert ! video/x-raw,format=BGR ! appsink name=sink"
+        },
+        "export_params": {
+            "filename": "webcam_video_left.avi",
+            "image_extension": ".avi",
+            "need_stream": false,
+            "min_size_bytes": 10240
+        },
+        "stream_params": {
+            "appsrc_stream": "( appsrc name=mysrc ! videoconvert ! videoscale ! video/x-raw,width=640,height=360 ! x264enc bframes=0 speed-preset=ultrafast tune=zerolatency key-int-max=1 ! video/x-h264,profile=main ! rtph264pay name=pay0 pt=96 )",
+            "rtsp_port": "8558",
+            "mount_point": "/webcam_left",
+            "grayscale": false,
+            "format": "BGR"
+        },
+        "output_dir": "frames_buffer",
+        "use_zmq": false,
+        "name": "left_webcam_processor_service"
+    },
+    "gst_audio_service": {
+        "execute": "python ./audio_recorder/audio_recorder.py",
+        "pipeline": "<REPLACE>",
+        "outfile_name": "audio_channel.wav"
+    },
+    "tag_recorder_service": {
+        "execute": "python ./tag_recorder/tag_recorder_service.py",
+        "output_dir": ""
+    },
+    "remote_camera_processor_service": {
+        "execute": "/etc/silent-speech/camera_processor_service",
+        "remote_host": "jrecorder",
+        "connection_timeout": 3,
+        "camera_params": {
+            "cam_type": 1,
+            "width": 1280,
+            "height": 720,
+            "fps": 100,
+            "exposure": 3000,
+            "gain": 16,
+            "id_type": "bus",
+            "device": "<REPLACE>",
+            "gst_plugin": "v4l2src device=",
+            "stream": " ! video/x-bayer,format=rggb,width=1280,height=720,framerate=100/1 ! queue ! appsink name=sink sync=false"
+        },
+        "export_params": {
+            "filename": "Frames_v1.0.tar",
+            "image_extension": ".raw",
+            "need_stream": true
+        },
+        "stream_params": {
+            "appsrc_stream": "( appsrc name=mysrc ! nvvidconv flip-method=clockwise ! videoscale ! video/x-raw(memory:NVMM),width=640,height=360 ! nvvidconv ! videobalance brightness=0.5 contrast=1.5 ! nvvidconv ! nvv4l2h264enc bframes=0 speed-preset=ultrafast tune=zerolatency key-int-max=1 ! video/x-h264,profile=main ! rtph264pay name=pay0 pt=96 )",
+            "rtsp_port": "8555",
+            "mount_point": "/pi",
+            "grayscale": true,
+            "format": "GRAY8"
+        },
+        "crop": {
+            "top": "<REPLACE>",
+            "left": "<REPLACE>"
+        },
+        "events_dir": "events",
+        "output_dir": "frames_buffer",
+        "use_zmq": true,
+        "name": "remote_camera_processor_service",
+        "q_sensor_serial": "<REPLACE>"
+    },
+    "remote_right_camera_processor_service": {
+        "execute": "/etc/silent-speech/camera_processor_service",
+        "remote_host": "jrecorder",
+        "connection_timeout": 3,
+        "camera_params": {
+            "cam_type": 1,
+            "width": 1280,
+            "height": 720,
+            "fps": 100,
+            "exposure": 3000,
+            "gain": 16,
+            "id_type": "bus",
+            "device": "<REPLACE>",
+            "gst_plugin": "v4l2src device=",
+            "stream": " ! video/x-bayer,format=rggb,width=1280,height=720,framerate=100/1 ! queue ! appsink name=sink sync=false"
+        },
+        "export_params": {
+            "filename": "Frames_v1.0_right.tar",
+            "image_extension": ".raw",
+            "need_stream": false
+        },
+        "stream_params": {
+            "appsrc_stream": "( appsrc name=mysrc ! nvvidconv flip-method=clockwise ! videoscale ! video/x-raw(memory:NVMM),width=640,height=360 ! nvvidconv ! videobalance brightness=0.5 contrast=1.5 ! nvvidconv ! nvv4l2h264enc bframes=0 speed-preset=ultrafast tune=zerolatency key-int-max=1 ! video/x-h264,profile=main ! rtph264pay name=pay0 pt=96 )",
+            "rtsp_port": "8557",
+            "mount_point": "/pi_right",
+            "grayscale": true,
+            "format": "GRAY8"
+        },
+        "crop": {
+            "top": "<REPLACE>",
+            "left": "<REPLACE>"
+        },
+        "events_dir": "events",
+        "output_dir": "frames_buffer_right",
+        "use_zmq": true,
+        "name": "remote_right_camera_processor_service",
+        "q_sensor_serial": "<REPLACE>"
+    },
+    "monitor_service": {
+        "execute": "python ./monitor/monitor_service.py",
+        "per_stage_bytes": "1500000000",
+        "period": "5",
+        "cpu_limit": 80,
+        "ram_limit": 80,
+        "disk_limit": 90
+    },
+    "peripherals_service": {
+        "execute": "python ./peripherals/arduino_peripherals_service.py",
+        "serial_device": "/dev/ttyACM0"
+    },
+    "remote_peripherals_service": {
+        "execute": "/home/recorder/new-silent-speech-system/venv/bin/python /home/recorder/new-silent-speech-system/q_cue_andromeda/q_services/peripherals/jetson_peripherals_service.py",
+        "remote_host": "jrecorder",
+        "connection_timeout": 3,
+        "gpio_high_on": false,
+        "name": "remote_peripherals_service"
+    },
+    "remote_imu_peripherals_service": {
+        "execute": "/home/recorder/new-silent-speech-system/venv/bin/python /home/recorder/new-silent-speech-system/q_cue_andromeda/q_services/peripherals/imu_peripherals_service.py",
+        "remote_host": "jrecorder",
+        "connection_timeout": 3,
+        "name": "remote_imu_peripherals_service"
+    },
+    "remote_feature_calc_service": {
+        "execute": "/home/recorder/new-silent-speech-system/venv/bin/python /home/recorder/new-silent-speech-system/q_cue_andromeda/q_services/feature_calc/feature_calc_service.py",
+        "remote_host": "jrecorder",
+        "connection_timeout": 3,
+        "input_dir": "frames_buffer",
+        "output_dir": "features_buffer",
+        "delete_buffer": true,
+        "from_tar": false,
+        "use_zmq": true,
+        "feature_streaming_port": 1240,
+        "name": "remote_feature_calc_service",
+        "q_sensor_version": "v1",
+        "versions": {
+            "v0": {
+                "q_sensor_version": "v0",
+                "frame_width": 1440,
+                "frame_height": 1080,
+                "win_size": 10,
+                "model_path": "/etc/silent-speech/playground/efficientnet_536sess_grid_max_80_10_f32_f16prc_old_aug_20230314_102317"
+            },
+            "v1": {
+                "q_sensor_version": "v1",
+                "frame_width": 1280,
+                "frame_height": 720,
+                "model_path": "/etc/silent-speech/playground/v1_model"
+            }
+        }
+    },
+    "remote_right_feature_calc_service": {
+        "execute": "/home/recorder/new-silent-speech-system/venv/bin/python /home/recorder/new-silent-speech-system/q_cue_andromeda/q_services/feature_calc/feature_calc_service.py",
+        "remote_host": "jrecorder",
+        "remote_username": "recorder",
+        "connection_timeout": 3,
+        "input_dir": "frames_buffer_right",
+        "output_dir": "features_buffer_right",
+        "delete_buffer": true,
+        "from_tar": false,
+        "use_zmq": true,
+        "feature_streaming_port": 1241,
+        "name": "remote_right_feature_calc_service",
+        "q_sensor_version": "v1",
+        "versions": {
+            "v0": {
+                "q_sensor_version": "v0",
+                "frame_width": 1440,
+                "frame_height": 1080,
+                "win_size": 10,
+                "model_path": "/etc/silent-speech/playground/efficientnet_536sess_grid_max_80_10_f32_f16prc_old_aug_20230314_102317"
+            },
+            "v1": {
+                "q_sensor_version": "v1",
+                "frame_width": 1280,
+                "frame_height": 720,
+                "model_path": "/etc/silent-speech/playground/v1_model"
+            }
+        }
+    },
+    "qad_service": {
+        "execute": "python ./qad_service/q_audio_detection.py",
+        "global_threshold": 0.5,
+        "sample_threshold": 0.5
+    },
+    "calibrator_service": {
+        "execute": "python ./calibrator/calibrator_service.py",
+        "qad_min": 20,
+        "qad_max": 60
+    }
+}

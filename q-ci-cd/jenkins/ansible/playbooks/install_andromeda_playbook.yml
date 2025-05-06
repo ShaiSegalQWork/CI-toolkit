@@ -1,0 +1,32 @@
+---
+- name: Create Python Virtual Environment and Install Andromeda
+  hosts: all
+  gather_facts: false
+  vars:
+    andromeda_version: "{{ input_version }}"
+    andromeda_home_path: "{{ andromeda_venv_path }}"
+
+  tasks:
+    - name: "Check|Create folder path: {{ andromeda_home_path }}"
+      ansible.builtin.file:
+        state: directory
+        mode: "0775"
+        owner: recorder
+        group: andromeda
+        path: "{{ andromeda_home_path }}"
+
+    - name: "Install prerequisite libraries in the virtual environment"
+      ansible.builtin.pip:
+        name:
+          - numpy==1.26.2
+          - typing-extensions==4.12.2
+        virtualenv: "{{ andromeda_home_path }}"
+        virtualenv_command: "python3.10 -m venv"
+        state: present
+
+    - name: "Install package: {{ andromeda_version }}"
+      ansible.builtin.pip:
+        name: "{{ andromeda_version }}"
+        virtualenv: "{{ andromeda_home_path }}"
+        virtualenv_command: "python3.10 -m venv"
+        state: present

@@ -1,0 +1,19 @@
+{
+    "services": [
+        "system_state_machine_service",
+        "keyboard_listener_service",
+        "remote_camera_processor_service",
+        "remote_right_camera_processor_service",
+        "remote_feature_calc_service",
+        "webcam_processor_service",
+        "left_webcam_processor_service",
+        "gst_audio_service",
+        "predict_service",
+        "predict_qad_service",
+        "remote_imu_peripherals_service"
+    ],
+    "system_overrides": {
+        "main_service": "predict_service"
+    },
+    "service_overrides": {}
+}

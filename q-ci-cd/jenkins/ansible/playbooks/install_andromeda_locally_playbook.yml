@@ -1,0 +1,33 @@
+---
+- name: Copy tar unpack and install q-cue-andromeda version
+  hosts: all
+  gather_facts: false
+  vars:
+    remote_dest_path: "/home/recorder"
+    andromeda_version: "{{ input_version }}"
+    tar_gz_src_path: "{{ input_tar_gz_src_path }}"
+    venv_path: "/home/recorder/new-silent-speech-system/venv"
+    unpacking_base_folder_name: "q_cue_andromeda_unpacked_versions"
+
+  tasks:
+    - name: "Print if can connect"
+      ansible.builtin.debug:
+        msg: "Can connect"
+    - name: "Create folder for tar unpacking"
+      ansible.builtin.file:
+        mode: "0755"
+        state: directory
+        path: "{{ remote_dest_path }}/{{ unpacking_base_folder_name }}"
+    - name: "Untar the file on the remote host"
+      ansible.builtin.unarchive:
+        copy: true
+        src: "{{ tar_gz_src_path }}"
+        dest: "{{ remote_dest_path }}/{{ unpacking_base_folder_name }}"
+    - name: "Install package q-cue-andromeda from remote host local folder version: {{ andromeda_version }} "
+      ansible.builtin.pip:
+        state: present
+        virtualenv: "{{ venv_path }}"
+        chdir: "{{ remote_dest_path }}"
+        virtualenv_command: "python3.10 -m venv"
+        name: "q-cue-andromeda=={{ andromeda_version }}"
+        extra_args: "--no-index --find-links ./{{ unpacking_base_folder_name }}/q_cue_andromeda-{{ andromeda_version }}"

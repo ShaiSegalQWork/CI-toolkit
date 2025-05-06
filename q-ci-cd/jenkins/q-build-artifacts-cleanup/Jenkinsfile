@@ -1,0 +1,39 @@
+pipeline {
+    agent { label 'JSlave02.q.ai' }
+    stages {
+        stage('Checkout required repos') {
+            steps {
+                checkout(
+                    [
+                        $class: 'GitSCM',
+                        branches: [[name: "feature/GEN-6243-update-ui-base-image"]],
+                        doGenerateSubmoduleConfigurations: false,
+                        extensions: [
+                            [$class: 'RelativeTargetDirectory', relativeTargetDir : "q-ci-cd"]
+                        ],
+                        submoduleCfg: [],
+                        userRemoteConfigs: [
+                            [credentialsId: 'Jenkins-Master-User', url: "git@github.com:Q-cue-ai/q-ci-cd.git"],
+                        ],
+                    ]
+                )
+            }
+        }
+        stage('Cleanup PR Artifacts') {
+            environment { 
+                GITHUB_ORG = "Q-cue-ai"
+                GITHUB_TOKEN = credentials('YairZahavi_Github_Api_Key')
+                ARTIFACTS_DIR = "/mnt/Artifacts/build_artifacts"
+            }
+            steps {
+                dir("q-ci-cd") {
+                    script {
+                        def rootDir = pwd()
+                        def CleanupArtifacts = load "${rootDir}/jenkins/q-build-artifacts-cleanup/cleanup_artifacts.groovy"
+                        CleanupArtifacts.cleanArtifacts()
+                    }
+                }
+            }
+        }
+    } 
+}

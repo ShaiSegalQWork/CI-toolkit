@@ -1,0 +1,46 @@
+pipeline {
+    agent { label 'JSlave02.q.ai' }
+    parameters {
+        string(name: 'UBUNTU_VERSION', defaultValue: '20.04')
+        string(name: 'NODE_VERSION', defaultValue: '20')
+        string(name: 'INSTALL_PYTHON', defaultValue: 'true')
+        string(name: 'TAG_VERSION', defaultValue: 'test')
+    }
+    environment {
+        NODE_VERSION = "${params.NODE_VERSION}"
+        UBUNTU_VERSION = "${params.UBUNTU_VERSION}"
+        PYTHON_VERSION = "${params.PYTHON_VERSION}"
+        DOCKER_RELEASE_TAG = "${params.UBUNTU_VERSION}-${params.NODE_VERSION}-${params.TAG_VERSION}"
+        DOCKER_REGISTRY = 'https://harbor.q.ai/'
+        DOCKER_TAG_REPO_PATH = 'q-cue-ui/q-cue-ui-base'
+        DOCKER_CREDENTIAL_ID = 'Jenkins_Service_Account_User_Password'
+    }
+    stages {
+        stage('build docker image') {
+            steps {
+                dir('q-ci-cd/docker') {
+                    script {
+                        DOCKER_FULL_TAG = "${DOCKER_TAG_REPO_PATH}:${env.DOCKER_RELEASE_TAG}"
+                        DOCKER_IMAGE = docker.build("${DOCKER_FULL_TAG}", "--build-arg UBUNTU_VERSION=${env.UBUNTU_VERSION} --build-arg NODE_VERSION=${env.NODE_VERSION} --build-arg INSTALL_PYTHON=\"${env.INSTALL_PYTHON}\" -f ./jenkins-ui.dockerfile .")
+                    }
+                }
+            }
+        }
+        stage('push to docker registry') {
+            steps {
+                script {
+                    docker.withRegistry( DOCKER_REGISTRY, DOCKER_CREDENTIAL_ID) {
+                        DOCKER_IMAGE.push()
+                    }
+                }
+            }
+        }
+        stage('docker image cleanup') {
+            steps {
+                script {
+                    sh "docker rmi ${DOCKER_FULL_TAG} --force"
+                }
+            }
+        }      
+    } 
+}

@@ -1,0 +1,25 @@
+{
+    "services": [
+        "remote_camera_processor_service",
+        "remote_right_camera_processor_service",
+        "monitor_service",
+        "system_state_machine_service",
+        "webcam_processor_service",
+        "left_webcam_processor_service",
+        "remote_signals_metrics_calc_service",
+        "signals_metrics_plotter_service",
+        "signals_videos_osd_service",
+        "gst_audio_service",
+        "keyboard_listener_service",
+        "remote_imu_peripherals_service"
+    ],
+    "system_overrides": {
+        "main_service": "signals_videos_osd_service"
+    },
+    "service_overrides": {
+        "system_state_machine_service": {
+            "is_signals_flow": true,
+            "use_qad": false
+        }
+    }
+}

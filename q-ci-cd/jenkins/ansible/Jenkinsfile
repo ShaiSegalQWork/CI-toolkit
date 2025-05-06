@@ -1,0 +1,234 @@
+properties([
+    parameters([
+        [$class: 'ChoiceParameter',
+            choiceType: 'PT_CHECKBOX',
+            description: "Select recorders and jrecorders to update. Notice, requires additional approval after triggering!",
+            filterLength: 1,
+            filterable: true,
+            name: 'RECORDERS_AND_JRECORDERS_TO_UPDATE',
+            script: [$class: 'GroovyScript',
+                fallbackScript: [classpath: [], sandbox: false, script: 'return ["Could not get component"]'],
+                script: [classpath: [], sandbox: false, 
+                    script: 
+"""
+import jenkins.model.*
+
+def CREDENTIAL_ID = 'Jenkins_Service_Account_User_Password'
+
+def USERNAME = com.cloudbees.plugins.credentials.SystemCredentialsProvider.getInstance().getStore().getCredentials(com.cloudbees.plugins.credentials.domains.Domain.global()).find { it.getId().equals(CREDENTIAL_ID) }.getUsername().toString()                        
+
+def PASSWORD = com.cloudbees.plugins.credentials.SystemCredentialsProvider.getInstance().getStore().getCredentials(com.cloudbees.plugins.credentials.domains.Domain.global()).find { it.getId().equals(CREDENTIAL_ID) }.getPassword().toString()
+
+def command_1 = ["/var/lib/jenkins/.local/bin/adidnsdump", "--user", "q\\\\"+USERNAME, "--password" , PASSWORD,  "--resolve", "dc01.q.ai"]
+
+def process_1 = new ProcessBuilder(command_1).start()
+
+process_1.waitFor()
+
+def filePath = "/var/lib/jenkins/records.csv"  
+
+def resultArray = []
+
+new File(filePath).eachLine { line ->
+
+def values = line.split(',')
+
+if (values.size() >= 2 && line.contains("recorder")) {
+                            
+    def lastValue = values[-1]
+    def secondToLastValue = values[-2]
+
+    def composedString = "\${secondToLastValue}, \${lastValue}"
+
+    resultArray.add(composedString)
+
+    }
+}
+
+return resultArray
+"""
+                ]
+            ]
+        ]
+    ])
+])
+
+pipeline {
+    agent { label 'JSlave02.q.ai' }
+    parameters {
+        string(name: 'PARAMETER_RECORDERS_AND_JRECORDERS_TO_UPDATE', description: 'This parameter is set by other pipelines that trigger this job. Dont set it when triggering.' ,defaultValue: '')
+        string(name: 'ANDROMEDA_BASE_PATH', description: 'Path to the Python virtual environment, path should be under recorder user permissions', defaultValue: '/home/recorder/new-silent-speech-system/')
+        gitParameter(description: "Tag from andromeda to use when updating all recorders and jrecorders. Notice, requires additional approval after triggering!", defaultValue: 'None', branchFilter: 'origin/(.*)', tagFilter: 'v*.*', name: 'TAG_TO_DISTRIBUTE', type: 'PT_BRANCH_TAG', sortMode: 'DESCENDING_SMART', useRepository: 'git@github.com:Q-cue-ai/q-andromeda.git')
+        string(name: 'EXTRA_PIP_ARGS', defaultValue: '--prerelease=allow', description: 'Add here any extra arguments needed to intall the app, e.g "--prerelease=allow" is a valid argument, If it is more that one argument - use space between them, If no arguements are needed, leave it blank, The defualt will be "--prerelease=allow"' )
+        string(name: 'PYTHON_VERSION', defaultValue: '3.10.12', description: 'Choose what python version you would like to run' )
+        choice(name: 'TARGET_SITE', choices: ['IL'], description: 'Select the target site')
+        string(name: 'CUSTOM_PASSWORD', defaultValue: '', description: 'Pre-Defiend custom password - Use if you want to use a custom password instead of the defualt password for recorders.' )
+
+
+    }
+    environment {
+        ANSIBLE_HOST_KEY_CHECKING = "False"
+        ANSIBLE_CONFIG = "./config/ansible.cfg"
+        TAG_TO_UPDATE = "q-cue-andromeda==${params.TAG_TO_DISTRIBUTE.substring(1)}"
+        ANSIBLE_PRIVATE_DISTRIBUTION_KEY = credentials('Ansible_Private_Distribution_Key') 
+        RECORDERS_AND_JRECORDERS_TO_UPDATE = "${params.PARAMETER_RECORDERS_AND_JRECORDERS_TO_UPDATE ? params.PARAMETER_RECORDERS_AND_JRECORDERS_TO_UPDATE : params.RECORDERS_AND_JRECORDERS_TO_UPDATE}"
+        LDAP_USER = credentials('Jenkins_Service_Account_User')
+        LDAP_PASSWORD = credentials('Jenkins_Service_Account_Password')
+        DB_USER = credentials('Database_Account_User')
+        DB_PASSWORD = credentials('Database_Account_Password')
+        DB_CONN_URL = "q-data-db.q.ai/q-data-db-prod"
+        DEMO_TAG_REGEX = '^v\\d+\\.\\d+\\.\\d+\\.post\\d+$'
+        VENV_PATH = "${params.ANDROMEDA_BASE_PATH}/venv"
+        VENV_BASE_PATH = "${params.ANDROMEDA_BASE_PATH}"
+        ANDROMEDA_UNAME= "andromeda"
+        ANDROMEDA_GNAME= "recorder"
+        AWS_ACCESS_KEY= credentials('Jenkins_Code_Artifact_Service_Account_AKI_SAK_Q')
+        AWS_SECRET_ACCESS= ('Jenkins_Code_Artifact_Service_Account_AKI_SAK_Q')
+        AWS_DOMAIN = "q-ai"
+        AWS_ACCOUNT_ID = "608104255617"
+        ANDROMEDA_VERSION= "${(TAG_TO_UPDATE)}"
+        DEST_SITE="${params.DEST_SITE}"
+        EXTRA_PIP_ARGS="${params.EXTRA_PIP_ARGS}"
+        PYTHON_VERSION="${params.PYTHON_VERSION}"
+        CUSTOM_PASSWORD="${params.CUSTOM_PASSWORD}"
+        Q_FARM_BECOME_PASSWORD = credentials('Q_FARM_BECOME_PASSWORD') // Ensure this matches your Jenkins secret ID
+    }
+    stages {
+        stage('continue or stop pipeline'){
+            steps {
+                script {
+                    SORTED_OUTPUT = sh returnStdout: true, script: """#!/usr/bin/env bash
+                        IFS=',' read -ra elements <<< "$RECORDERS_AND_JRECORDERS_TO_UPDATE"
+                        for ((i = 0; i < \${#elements[@]}; i += 2)); do 
+                          echo "\${elements[i]}" 
+                        done """
+                }
+                timeout(time: 1, unit: 'MINUTES') {
+                    input message: "Do you wish continue update of TAG: ${params.TAG_TO_DISTRIBUTE} on the following recorders\\jrecorders:\n${SORTED_OUTPUT}", ok: 'Continue'
+                }
+            }
+        }
+        stage('Set Credential Based on Site') {
+            steps {
+                script {
+                    if (params.CUSTOM_PASSWORD?.trim()) {
+                      // 1) A custom password was provided — use it directly:
+                      env.BECOME_PASS = params.CUSTOM_PASSWORD.trim()
+                      echo "🔒 Using custom password from parameter."
+                    } else {
+                      // 2) No custom password — use credentials plugin as before:
+                      def credentialId
+                      switch (params.TARGET_SITE) {
+                        case 'IL':
+                          credentialId = 'BECOME_PASS_SITE_IL'
+                          break
+                        default:
+                          error "❌ Unknown site '${params.TARGET_SITE}'. Please fix and re-run."
+                      }
+                      env.CRED_ID = credentialId
+                      echo "🔑 Will fetch password from credentialsId='${credentialId}'."
+                    }                 
+                  }                 
+               }
+            }
+
+        stage('Run ansible playbook') {
+          steps {
+            // 1️⃣ Always bind AWS creds first
+            withCredentials([[
+              $class: 'AmazonWebServicesCredentialsBinding',
+              credentialsId: 'Jenkins_Code_Artifact_Service_Account_AKI_SAK_Q',
+              accessKeyVariable: 'AWS_ACCESS_KEY_ID',
+              secretKeyVariable: 'AWS_SECRET_ACCESS_KEY'
+            ]]) {
+              dir('jenkins/ansible') {
+                script {
+                  echo "Deploying to: ${params.TARGET_SITE}"
+        
+                  if (env.CRED_ID) {
+                    // 2️⃣ No custom password → pull from Jenkins Credentials
+                    withCredentials([string(credentialsId: env.CRED_ID, variable: 'BECOME_PASS')]) {
+                      sh """
+                        ansible-playbook --private-key="${ANSIBLE_PRIVATE_DISTRIBUTION_KEY}" \
+                          -i ./inventory/ansible_dynamic_inventory.py \
+                          ./playbooks/deploy-qandromeda-uv.yml \
+                          --extra-vars "input_version=${TAG_TO_UPDATE} \
+                           python_version=${PYTHON_VERSION} \
+                           q_site_password=${BECOME_PASS} \
+                           extra_pip_args=${EXTRA_PIP_ARGS} \
+                           andromeda_version=${ANDROMEDA_VERSION} \
+                           ansible_become_password=${BECOME_PASS} \
+                           andromeda_venv_base_path=${VENV_BASE_PATH} \
+                           andromeda_venv_path=${VENV_PATH} \
+                           andromeda_group_name=${ANDROMEDA_GNAME} \
+                           andromeda_username=${ANDROMEDA_UNAME} \
+                           aws_secret_key=${AWS_SECRET_ACCESS_KEY} \
+                           AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID} \
+                           AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}"
+                      """
+                    }
+                  } else {
+                    // 3️⃣ Custom password was provided → already in env.BECOME_PASS
+                    sh """
+                      ansible-playbook --private-key="${ANSIBLE_PRIVATE_DISTRIBUTION_KEY}" \
+                        -i ./inventory/ansible_dynamic_inventory.py \
+                        ./playbooks/deploy-qandromeda-uv.yml \
+                        --extra-vars "input_version=${TAG_TO_UPDATE} \
+                         python_version=${PYTHON_VERSION} \
+                         q_site_password=${BECOME_PASS} \
+                         extra_pip_args=${EXTRA_PIP_ARGS} \
+                         andromeda_version=${ANDROMEDA_VERSION} \
+                         ansible_become_password=${BECOME_PASS} \
+                         andromeda_venv_base_path=${VENV_BASE_PATH} \
+                         andromeda_venv_path=${VENV_PATH} \
+                         andromeda_group_name=${ANDROMEDA_GNAME} \
+                         andromeda_username=${ANDROMEDA_UNAME} \
+                         aws_secret_key=${AWS_SECRET_ACCESS_KEY} \
+                         AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID} \
+                         AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}"
+                    """
+                  }
+                }
+              }
+            }
+          }
+        }
+
+        stage('Download resources') {
+            when {
+                expression { 
+                    return params.TAG_TO_DISTRIBUTE ==~ env.DEMO_TAG_REGEX
+                }
+            }
+            steps {
+                dir('jenkins/ansible') {
+                    sh '''
+                        ansible-playbook --private-key="$ANSIBLE_PRIVATE_DISTRIBUTION_KEY" \
+                        -i ./inventory/ansible_dynamic_inventory.py \
+                        ./playbooks/install_andromeda_demo_resources_playbook.yml \
+                        --extra-vars "ldap_username='$LDAP_USER' ldap_password='$LDAP_PASSWORD' db_username='$DB_USER' db_password='$DB_PASSWORD' db_conn_url='$DB_CONN_URL'"
+                    '''
+                }
+            }
+        }
+    }
+    post { 
+        success { 
+            slackSend(channel: "C05LB9KD9U7", message: "BUILD: ${env.JOB_NAME} number ${env.BUILD_ID} succeeded \nURL: ${env.RUN_DISPLAY_URL}", tokenCredentialId: "Slack-Bot", color: "good")
+            emailext attachLog: true, 
+                     to: 'lior.mizrahi@q.ai, eran.roll@q.ai, ofir.rokach@q.ai, $BUILD_USER@q.ai', 
+                     subject: 'A new version was successfully deployed',
+                     body: 'Version: $TAG_TO_DISTRIBUTE<br> Recording Stations: $RECORDERS_AND_JRECORDERS_TO_UPDATE<br> Deployed by: $BUILD_USER<br> Jenkins URL: $RUN_DISPLAY_URL'
+        }
+        failure { 
+            slackSend(channel: "C05LB9KD9U7", message: "BUILD: ${env.JOB_NAME} number ${env.BUILD_ID} failed \nURL: ${env.RUN_DISPLAY_URL}", tokenCredentialId: "Slack-Bot", color: "danger")
+            emailext attachLog: true, 
+                     to: 'lior.mizrahi@q.ai, eran.roll@q.ai, ofir.rokach@q.ai, $BUILD_USER@q.ai', 
+                     subject: 'A new version failed to deploy', 
+                     body: 'Version: $TAG_TO_DISTRIBUTE<br> Recording Stations: $RECORDERS_AND_JRECORDERS_TO_UPDATE<br> Deployed by: $BUILD_USER<br> Jenkins URL: $RUN_DISPLAY_URL'
+        }
+        aborted { 
+            slackSend(channel: "C05LB9KD9U7", message: "BUILD: ${env.JOB_NAME} number ${env.BUILD_ID} aborted \nURL: ${env.RUN_DISPLAY_URL}", tokenCredentialId: "Slack-Bot", color: "warning")
+        }
+    }
+}

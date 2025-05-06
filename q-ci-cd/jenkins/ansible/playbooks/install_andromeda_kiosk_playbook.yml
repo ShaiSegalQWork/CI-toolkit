@@ -1,0 +1,123 @@
+---
+- name: Copy Kiosk tar unarchive at remote and run script
+  hosts: all
+  become: true
+  gather_facts: false
+  vars:
+    aws_region: "us-east-1"
+    s3_type: "{{ S3_TYPE }}"
+    script_file_name: "main.sh"
+    remote_dest_path: "/home/recorder"
+    unpacking_base_folder_name: "kiosk_staging"
+    ansible_python_interpreter: "/usr/bin/python3"
+    kiosk_version: "{{ TAG_TO_UPDATE }}"
+    aws_access_key_id: "{{ AWS_ACCESS_KEY_ID }}"
+    aws_secret_access_key: "{{ AWS_SECRET_ACCESS_KEY }}"
+    s3_url: "s3://q-ai-production-bucket/Kiosk/{{ s3_type }}/"
+    s3_download_command: "aws s3 cp {{ s3_url }}{{ kiosk_version }} {{ remote_dest_path }}/{{ unpacking_base_folder_name }}/"
+  tasks:
+    - name: "Check if AWS CLI v2 is installed"
+      ansible.builtin.command: aws --version
+      register: aws_cli_installed
+      ignore_errors: true
+      changed_when: aws_cli_installed.rc != 0
+
+    - name: "Install dependencies"
+      ansible.builtin.apt:
+        name:
+          - curl
+          - unzip
+        state: present
+        update_cache: true
+
+    - name: "Download AWS CLI v2"
+      ansible.builtin.get_url:
+        url: "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip"
+        dest: "/tmp/awscliv2.zip"
+        mode: '0755'
+      when: aws_cli_installed.failed
+
+    - name: "Unzip AWS CLI v2"
+      ansible.builtin.unarchive:
+        src: "/tmp/awscliv2.zip"
+        dest: "/tmp"
+        remote_src: true
+      when: aws_cli_installed.failed
+
+    - name: "Install AWS CLI v2"
+      ansible.builtin.command: "sudo /tmp/aws/install"
+      when: aws_cli_installed.failed
+
+    - name: "Clean up"
+      ansible.builtin.file:
+        path: "/tmp/awscliv2.zip"
+        state: absent
+      when: aws_cli_installed.failed
+
+    - name: "Print if can connect"
+      ansible.builtin.debug:
+        msg: "Can connect"
+
+    - name: "Remove staging folder"
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      with_items:
+        - "{{ remote_dest_path }}/{{ unpacking_base_folder_name }}"
+
+    - name: "Create staging folder for tar unpacking"
+      ansible.builtin.file:
+        state: directory
+        mode: "0775"
+        owner: recorder
+        group: andromeda
+        path: "{{ remote_dest_path }}/{{ unpacking_base_folder_name }}"
+
+    - name: "Download from S3 bucket"
+      ansible.builtin.shell: "{{ s3_download_command }}"
+      environment:
+        AWS_DEFAULT_REGION: "{{ aws_region }}"
+        AWS_ACCESS_KEY_ID: "{{ aws_access_key_id }}"
+        AWS_SECRET_ACCESS_KEY: "{{ aws_secret_access_key }}"
+      register: login_output
+      changed_when: login_output.rc != 0
+      become: true
+      become_user: recorder
+
+    - name: "Untar the file on the remote host"
+      ansible.builtin.unarchive:
+        remote_src: true
+        src: "{{ remote_dest_path }}/{{ unpacking_base_folder_name }}/{{ kiosk_version }}"
+        dest: "{{ remote_dest_path }}/{{ unpacking_base_folder_name }}/"
+
+    - name: "Set permissions on unpacking folder"
+      ansible.builtin.file:
+        state: directory
+        mode: "0775"
+        owner: recorder
+        group: andromeda
+        path: "{{ remote_dest_path }}/{{ unpacking_base_folder_name }}"
+        recurse: true
+
+    - name: "Run script"
+      ansible.builtin.command: "bash {{ script_file_name }}"
+      args:
+        chdir: "{{ remote_dest_path }}/{{ unpacking_base_folder_name }}/build/"
+      register: install_output
+      changed_when: install_output.rc != 0
+
+    - name: "Output stdout"
+      ansible.builtin.debug:
+        msg: "{{ item }}"
+      with_items: "{{ install_output.stdout_lines }}"
+      when: install_output.stdout_lines
+
+    - name: "Output stderr"
+      ansible.builtin.debug:
+        msg: "{{ item }}"
+      with_items: "{{ install_output.stderr_lines }}"
+      when: install_output.stderr_lines
+
+    - name: "Reboot remote host"
+      ansible.builtin.reboot:
+        msg: "Rebooting the machine"

@@ -1,0 +1,64 @@
+{
+  "db_conn": "postgresql://devops:manager11@qdbset.q.ai/q-files-dev",
+  "services_dir": "/home/recorder/new-silent-speech-system/q_cue_andromeda/q_services",
+  "log_level": "debug",
+  "phoneme_timeout": 10,
+  "statement_timeout": 20,
+  "audio_files_dir": "/etc/silent-speech/audio-files",
+  "audio_file_ext": ".flac",
+  "video_files_dir": "/etc/silent-speech/signals-video-files",
+  "video_file_ext": ".mp4",
+  "main_service": "osd_service",
+  "experiment_to_blueprint_ids": {
+    "phoneme": "cc0aab05-9b1e-4a9a-918d-2a873b7d837d",
+    "statement": "ffcc7566-3f4b-4ba5-b590-691c022a907f",
+    "morning_test": "f8580354-5ae6-4c98-9176-3280efe60c12",
+    "morning_test_signals": "f8580354-5ae6-4c98-9176-3280efe60c12",
+    "signals_lip": "888407be-8572-4414-8714-016eb24226f2",
+    "signals_loud": "5d7215b2-ee36-425e-96a5-ba897a78d125",
+    "signals_ventriloquist": "86f88ac6-28d6-419a-9fa4-f389c0a6ec27",
+    "signals_mimic": "ddc70fd4-d4b0-4dbc-b5f3-c007d4448fee",
+    "signals_karaoke": "7e7008ea-15ca-4714-af9a-fda6a9f30726"
+  },
+  "stderr": "stderr.log",
+  "remote_hosts": [
+    {
+      "name": "jrecorder",
+      "address": "192.168.55.1",
+      "runner_address": "192.168.55.100",
+      "username": "recorder",
+      "connection_timeout": "10"
+    }
+  ],
+  "directories": {
+    "root": "/home/recorder/Desktop/silent-speech-out",
+    "database": "db",
+    "events": "events",
+    "logs": "logs",
+    "config": "config",
+    "debug": "debug"
+  },
+  "artifacts": {
+    "experiment": {
+      "report": "report.json",
+      "subject": "subject.json",
+      "operator": "operator.json"
+    },
+    "stage": {
+      "report": "report.json",
+      "imu": "imu_results.csv",
+      "ffmpeg": [
+        "webcam_video.avi",
+        "webcam_video_left.avi",
+        "audio_channel.wav"
+      ],
+      "timestamps": [
+        "words_timestamps.txt"
+      ],
+      "frames_tar": [
+        "Frames_v1.0.tar",
+        "Frames_v1.0_right.tar"
+      ]
+    }
+  }
+}

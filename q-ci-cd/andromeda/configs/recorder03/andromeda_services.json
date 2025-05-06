@@ -1,0 +1,35 @@
+{
+    "webcam_processor_service": {
+        "camera_params": {
+            "device": "usb-0000:00:14.0-5.3"
+        }
+    },
+    "left_webcam_processor_service": {
+        "camera_params": {
+            "device": "usb-0000:00:14.0-5.2"
+        }
+    },
+    "gst_audio_service": {
+        "pipeline": "pulsesrc device=alsa_input.usb-Sonix_Technology_Co.__Ltd._Lenovo_FHD_Webcam_Audio_SN0001-02.analog-stereo ! audioconvert ! wavenc ! queue ! filesink name=sink"
+    },
+    "remote_camera_processor_service": {
+        "camera_params": {
+            "device": "platform:tegra-capture-vi:2"
+        },
+        "crop": {
+            "top": 650,
+            "left": 750
+        },
+        "q_sensor_serial": "4"
+    },
+    "remote_right_camera_processor_service": {
+        "camera_params": {
+            "device": "platform:tegra-capture-vi:0"
+        },
+        "crop": {
+            "top": 850,
+            "left": 850
+        },
+        "q_sensor_serial": "9"
+    }
+}

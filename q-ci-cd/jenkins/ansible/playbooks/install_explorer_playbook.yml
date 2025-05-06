@@ -1,0 +1,74 @@
+---
+- name: Create Python Virtual Environment, Install Q-Cue-Explorer and create FTSA desktop script
+  hosts: all
+  gather_facts: false
+  vars:
+    user: "recorder"
+    group: "andromeda"
+    q_explorer_app_dir: /home/recorder/q-cue-explorer
+    q_explorer_report_dir: /etc/silent-speech/fts_reports
+    q_explorer_venv_dir: /home/recorder/q-cue-explorer/venv
+    q_explorer_desktop_script: /home/recorder/Desktop/fts.sh
+    q_explorer_version: "q-cue-explorer=={{ input_version }}"
+    q_explorer_venv_base_path: "/home/recorder/q-cue-explorer"
+
+  tasks:
+    - name: "Install prerequisite packages"
+      become: true
+      ansible.builtin.apt:
+        name:
+          - libxcb-cursor0
+        state: present
+        update_cache: true
+
+    - name: "Install q-cue-explorer in virtual environment"
+      ansible.builtin.pip:
+        name: "{{ q_explorer_version }}"
+        virtualenv: "{{ q_explorer_venv_dir }}"
+        virtualenv_command: "python3.10 -m venv"
+        chdir: "{{ q_explorer_venv_base_path }}"
+        state: present
+      become: true
+      become_user: "{{ user }}"
+      register: install_output
+
+    - name: "Set permissions on application directory"
+      become: true
+      ansible.builtin.file:
+        state: directory
+        path: "{{ q_explorer_app_dir }}"
+        owner: "{{ user }}"
+        group: "{{ group }}"
+        mode: "0775"
+        recurse: true
+
+    - name: "Set permissions on reports directory"
+      become: true
+      ansible.builtin.file:
+        state: directory
+        path: "{{ q_explorer_report_dir }}"
+        owner: "{{ user }}"
+        group: "{{ group }}"
+        mode: "0775"
+        recurse: true
+
+    - name: "Create desktop executable script"
+      ansible.builtin.copy:
+        dest: "{{ q_explorer_desktop_script }}"
+        mode: '0777'
+        owner: "{{ user }}"
+        group: "{{ group }}"
+        content: |
+          #!/usr/bin/bash
+          set -e
+          SYSTEM_DIR=/home/recorder/q-cue-explorer
+          source ${SYSTEM_DIR}/venv/bin/activate
+          cd ${SYSTEM_DIR}
+          q-fts
+
+    - name: "Ensure desktop script is executable"
+      ansible.builtin.file:
+        path: "{{ q_explorer_desktop_script }}"
+        owner: "{{ user }}"
+        group: "{{ group }}"
+        mode: '0777'

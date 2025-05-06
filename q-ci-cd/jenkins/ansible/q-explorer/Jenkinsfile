@@ -1,0 +1,117 @@
+properties([
+    parameters([
+        [$class: 'ChoiceParameter',
+            choiceType: 'PT_CHECKBOX',
+            description: "Select recorders and jrecorders to update. Notice, requires additional approval after triggering!",
+            filterLength: 1,
+            filterable: true,
+            name: 'RECORDERS_AND_JRECORDERS_TO_UPDATE',
+            script: [$class: 'GroovyScript',
+                fallbackScript: [classpath: [], sandbox: false, script: 'return ["Could not get component"]'],
+                script: [classpath: [], sandbox: false, 
+                    script: 
+"""
+import jenkins.model.*
+
+def CREDENTIAL_ID = 'Jenkins_Service_Account_User_Password'
+
+def USERNAME = com.cloudbees.plugins.credentials.SystemCredentialsProvider.getInstance().getStore().getCredentials(com.cloudbees.plugins.credentials.domains.Domain.global()).find { it.getId().equals(CREDENTIAL_ID) }.getUsername().toString()                        
+
+def PASSWORD = com.cloudbees.plugins.credentials.SystemCredentialsProvider.getInstance().getStore().getCredentials(com.cloudbees.plugins.credentials.domains.Domain.global()).find { it.getId().equals(CREDENTIAL_ID) }.getPassword().toString()
+
+def command_1 = ["/var/lib/jenkins/.local/bin/adidnsdump", "--user", "q\\\\"+USERNAME, "--password" , PASSWORD,  "--resolve", "dc01.q.ai"]
+
+def process_1 = new ProcessBuilder(command_1).start()
+
+process_1.waitFor()
+
+def filePath = "/var/lib/jenkins/records.csv"  
+
+def resultArray = []
+
+new File(filePath).eachLine { line ->
+
+def values = line.split(',')
+
+if (values.size() >= 2 && line.contains("recorder")) {
+                            
+    def lastValue = values[-1]
+    def secondToLastValue = values[-2]
+
+    def composedString = "\${secondToLastValue}, \${lastValue}"
+
+    resultArray.add(composedString)
+
+    }
+}
+
+return resultArray
+"""
+                ]
+            ]
+        ]
+    ])
+])
+
+pipeline {
+    agent {label 'JSlave02.q.ai'}
+    parameters {
+        string(name: 'PARAMETER_RECORDERS_AND_JRECORDERS_TO_UPDATE', description: 'This parameter is set by other pipelines that trigger this job. Dont set it when triggering.' ,defaultValue: '')
+        gitParameter description: "Tag from q-cue-explorer to use when updating all recorders and jrecorders. Notice, requires additional approval after triggering!", defaultValue: 'Master', branchFilter: 'origin/(.*)', tagFilter: 'v*.*', name: 'TAG_TO_DISTRIBUTE', type: 'PT_BRANCH_TAG', sortMode: 'DESCENDING_SMART', useRepository: 'git@github.com:Q-cue-ai/q-cue-explorer.git' 
+    }
+    environment {
+        ANSIBLE_HOST_KEY_CHECKING="False"
+        ANSIBLE_CONFIG="./config/ansible.cfg"
+        ANSIBLE_PRIVATE_DISTRIBUTION_KEY=credentials('Ansible_Private_Distribution_Key') 
+        RECORDERS_AND_JRECORDERS_TO_UPDATE="${params.PARAMETER_RECORDERS_AND_JRECORDERS_TO_UPDATE ? params.PARAMETER_RECORDERS_AND_JRECORDERS_TO_UPDATE : params.RECORDERS_AND_JRECORDERS_TO_UPDATE}"
+        ANSIBLE_BECOME_PASS=credentials("Ansible_Become_Password")
+    }
+    stages {
+        stage('continue or stop pipeline'){
+            steps {
+                script {
+                    SORTED_OUTPUT = sh returnStdout: true, script: """#!/usr/bin/env bash
+                        IFS=',' read -ra elements <<< "$RECORDERS_AND_JRECORDERS_TO_UPDATE"
+                        for ((i = 0; i < \${#elements[@]}; i += 2)); do 
+                          echo "\${elements[i]}" 
+                        done """
+                }
+                timeout(time: 1, unit: 'MINUTES') {
+                    input message: "Do you wish continue update of TAG: ${params.TAG_TO_DISTRIBUTE} on the following recorders\\jrecorders:\n${SORTED_OUTPUT}", ok: 'Continue'
+                }
+            }
+        }
+        stage('Run ansible playbook') {
+            steps {
+                dir('jenkins/ansible') {
+                    sh """
+                        ansible-playbook --private-key=\"\$ANSIBLE_PRIVATE_DISTRIBUTION_KEY\" \
+                            -i ./inventory/ansible_dynamic_inventory.py \
+                            ./playbooks/install_explorer_playbook.yml \
+                            --extra-vars "input_version=${params.TAG_TO_DISTRIBUTE} ansible_become_pass=\$ANSIBLE_BECOME_PASS"
+                    """
+
+                }
+            }
+        }
+    }
+    post { 
+        success { 
+            slackSend(channel: "C05LB9KD9U7", message: "BUILD: ${env.JOB_NAME} number ${env.BUILD_ID} succeeded \nURL: ${env.RUN_DISPLAY_URL}", token: "Slack-Bot", color: "good")
+            emailext attachLog: true, 
+                     to: 'lior.mizrahi@q.ai, eran.roll@q.ai, ofir.rokach@q.ai, $BUILD_USER@q.ai', 
+                     subject: 'A new version was successfully deployed',
+                     body: 'Version: $TAG_TO_DISTRIBUTE<br> Recording Stations: $RECORDERS_AND_JRECORDERS_TO_UPDATE<br> Deployed by: $BUILD_USER<br> Jenkins URL: $RUN_DISPLAY_URL'
+        }
+        failure { 
+            slackSend(channel: "C05LB9KD9U7", message: "BUILD: ${env.JOB_NAME} number ${env.BUILD_ID} failed \nURL: ${env.RUN_DISPLAY_URL}", token: "Slack-Bot", color: "danger")
+            emailext attachLog: true, 
+                     to: 'lior.mizrahi@q.ai, eran.roll@q.ai, ofir.rokach@q.ai, $BUILD_USER@q.ai', 
+                     subject: 'A new version failed to deploy', 
+                     body: 'Version: $TAG_TO_DISTRIBUTE<br> Recording Stations: $RECORDERS_AND_JRECORDERS_TO_UPDATE<br> Deployed by: $BUILD_USER<br> Jenkins URL: $RUN_DISPLAY_URL'
+        }
+        aborted { 
+            slackSend(channel: "C05LB9KD9U7", message: "BUILD: ${env.JOB_NAME} number ${env.BUILD_ID} aborted \nURL: ${env.RUN_DISPLAY_URL}", token: "Slack-Bot", color: "warning")
+        }
+    }
+}

@@ -1,0 +1,8 @@
+---
+- name: "Test connection to hosts"
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: "Print if can connect"
+      ansible.builtin.debug:
+        msg: "Can connect"

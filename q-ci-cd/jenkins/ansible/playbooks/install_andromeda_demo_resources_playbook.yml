@@ -1,0 +1,26 @@
+---
+- name: Install Andromeda Demo assets for demo versions
+  hosts: all
+  gather_facts: false
+  vars:
+    ldap_username: "{{ ldap_username }}"
+    ldap_password: "{{ ldap_password }}"
+    db_username: "{{ db_username }}"
+    db_password: "{{ db_password }}"
+    db_conn_url: "{{ db_conn_url }}"
+    andromeda_home_path: "{{ andromeda_venv_path }}"
+
+  tasks:
+    - name: "Install demo resources"
+      ansible.builtin.shell: |
+        source {{ andromeda_home_path }}/bin/activate
+        {{ andromeda_home_path }}/bin/download-resources --config-file {{ andromeda_home_path }}/lib/python3.10/site-packages/q_cue_andromeda/q_services/q_system/resources/demo_resources.json \
+                           --andromeda-settings-file {{ andromeda_home_path }}/lib/python3.10/site-packages/q_cue_andromeda/q_services/q_system/config/andromeda_settings.json \
+                           --include-experiment False \
+                           --include-serial False \
+                           --include-station-label False \
+                           --ldap-username {{ ldap_username }} \
+                           --ldap-password {{ ldap_password }} \
+                           --db-username {{ db_username }} \
+                           --db-password {{ db_password }} \
+                           --db-conn-url {{ db_conn_url }}

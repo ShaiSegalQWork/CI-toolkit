@@ -1,0 +1,5 @@
+#!/bin/bash
+
+# work around windows paths breaking the build under MSYS2 - scripts using something like $(realpath "$0") will
+# always get a unix-like path
+cygpath -u "$(/usr/bin/realpath "$@")"

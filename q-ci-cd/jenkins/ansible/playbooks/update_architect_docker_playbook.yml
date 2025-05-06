@@ -1,0 +1,66 @@
+---
+- name: Update Docker Container with New Image Tag
+  hosts: all
+  become: yes
+  gather_facts: false
+  vars:
+    docker_registry: "harbor.q.ai" 
+    docker_container_name: "q-architect"
+    db_connection_string: "{{ db_connection_string }}"
+    docker_registry_password: "{{ docker_registry_password }}"
+    docker_registry_username: "{{ docker_registry_username }}"
+    docker_image_tag: "{{ docker_container_name }}:{{ image_tag }}"
+    docker_registry_path: "{{ docker_registry }}/{{ docker_container_name }}"
+    docker_image_full_tag: "{{ docker_registry_path }}/{{ docker_image_tag }}"
+
+  tasks:
+    - name: "Check if docker daemon config file has bip config"
+      ansible.builtin.command: "grep -q 'bip' /etc/docker/daemon.json"
+      register: grep_result
+      ignore_errors: yes
+    - name: "Display message of misconfiguration"
+      debug:
+        msg: "Docker daemon.json is not configured properly please insert 'bip':'192.168.1.1/24' into /etc/docker/daemon.json on remote target, restart docker daemon and retrigger deployment"
+      failed_when: grep_result.rc != 0
+    - name: "Log into docker registry harbor"
+      community.docker.docker_login:
+        reauthorize: true
+        registry_url: "{{ docker_registry }}"
+        username: "{{ docker_registry_username }}"
+        password: "{{ docker_registry_password }}"
+    - name: "Stop the current docker container: {{ docker_container_name }}"
+      community.docker.docker_container:
+        state: stopped
+        name: "{{ docker_container_name }}"
+      ignore_errors: yes  
+    - name: "Remove the current Docker container"
+      community.docker.docker_container:
+        state: absent
+        name: "{{ docker_container_name }}"
+      ignore_errors: yes
+    - name: "Pull the new Docker image: {{ docker_image_tag }}"
+      community.docker.docker_image_pull:
+        name: "{{ docker_image_full_tag }}"
+    - name: "Ensure path /home/q/q-architect-volume exists"
+      ansible.builtin.file: 
+        path: "/home/q/q-architect-volume"
+        state: directory
+    - name: "Template a file into /home/q/q-architect-volume/config.yaml"
+      ansible.builtin.template:
+        src: "config-template.yaml.j2"
+        dest: /home/q/q-architect-volume/config.yaml
+        owner: root
+        group: root
+        mode: '0644'
+    - name: "Run the new Docker image: {{ docker_image_tag }}"
+      community.docker.docker_container:
+        state: started
+        exposed_ports:
+          - 8001
+        ports:
+          - "8001:8001"
+        restart_policy: "always"
+        name: "{{ docker_container_name }}"
+        image: "{{ docker_image_full_tag }}"
+        volumes:
+          - /home/q/q-architect-volume:/etc/q-architect

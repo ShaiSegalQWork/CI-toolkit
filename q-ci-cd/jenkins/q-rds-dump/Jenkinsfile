@@ -1,0 +1,293 @@
+properties([
+    parameters([
+        [$class: 'ChoiceParameter',
+            choiceType: 'PT_CHECKBOX',
+            description: "DB version installed on amazon RDS database.",
+            name: 'rdsDbVersion',
+            script: [$class: 'GroovyScript',
+                fallbackScript: [classpath: [], sandbox: false, script: 'return ["Could not get components"]'],
+                script: [classpath: [], sandbox: false, 
+                    script: 
+"""
+import jenkins.model.*
+
+def resultArray = []
+def credentialId = 'Postgres_User_Password_Database_Credentials'
+def userName = com.cloudbees.plugins.credentials.SystemCredentialsProvider.getInstance().getStore().getCredentials(com.cloudbees.plugins.credentials.domains.Domain.global()).find { it.getId().equals(credentialId) }.getUsername().toString()                        
+def password = com.cloudbees.plugins.credentials.SystemCredentialsProvider.getInstance().getStore().getCredentials(com.cloudbees.plugins.credentials.domains.Domain.global()).find { it.getId().equals(credentialId) }.getPassword().toString()
+
+def psqlCommandOutput = ["env", "PGPASSWORD=\${password}", "psql", "-qAt", "-h", "q-database.c2pv1aoazjru.us-east-1.rds.amazonaws.com", "-p", "5432", "-d", "Q-Production", "-U", "\${userName}", "-c", "select * from alembic_version"].execute()
+
+def outputStream = new StringBuffer()
+
+psqlCommandOutput.waitForProcessOutput(outputStream, System.err)
+
+def alembicVersionString = outputStream.toString().trim() + ":selected"
+
+resultArray.add(alembicVersionString)
+
+return resultArray
+"""
+                ]
+            ]
+        ],
+        [$class: 'ChoiceParameter',
+            choiceType: 'PT_CHECKBOX',
+            description: "Select the following tables to be included in the database dump job.",
+            name: 'dbTables',
+            script: [$class: 'GroovyScript',
+                fallbackScript: [classpath: [], sandbox: false, script: 'return ["Could not get components"]'],
+                script: [classpath: [], sandbox: false, 
+                    script: 
+"""
+import jenkins.model.*
+  
+def resultArray = []
+def credentialId = 'Postgres_User_Password_Database_Credentials'
+def userName = com.cloudbees.plugins.credentials.SystemCredentialsProvider.getInstance().getStore().getCredentials(com.cloudbees.plugins.credentials.domains.Domain.global()).find { it.getId().equals(credentialId) }.getUsername().toString()                        
+def password = com.cloudbees.plugins.credentials.SystemCredentialsProvider.getInstance().getStore().getCredentials(com.cloudbees.plugins.credentials.domains.Domain.global()).find { it.getId().equals(credentialId) }.getPassword().toString()
+def preSelectedValues = ['blueprint', 'blueprint_blueprint_label_link', 'blueprint_label', 'instruction', 'readable_text', 'sensor_serial', 'stage_schema', 'stage_video', 'subject', 'text_label', 'text_text_label_link', 'text_to_label_link']
+
+def psqlCommandOutput = ["env", "PGPASSWORD=\${password}", "psql", "-qAt", "-h", "q-database.c2pv1aoazjru.us-east-1.rds.amazonaws.com", "-p", "5432", "-d", "Q-Production", "-U", "\${userName}", "-c", "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE'"].execute()
+
+def outputStream = new StringBuffer()
+
+psqlCommandOutput.waitForProcessOutput(outputStream, System.err)
+	  
+outputStream.toString().split().each { table ->
+  def tableString = table.toString()
+  if (preSelectedValues.contains(tableString)) {
+    resultArray.add(tableString + ':selected')
+  } else {
+    resultArray.add(tableString)
+  }
+}
+ 
+return resultArray
+"""
+                ]
+            ]
+        ],
+        [$class: 'ChoiceParameter',
+            choiceType: 'PT_CHECKBOX',
+            description: "Select one of tar files to update database at studios, if selected first step of new dump creation will not be triggered and studios will be updated from AWS S3 bucket. leave unselected to trigger entire job.",
+            name: 'tarFiles',
+            script: [$class: 'GroovyScript',
+                fallbackScript: [classpath: [], sandbox: false, script: 'return ["Could not get components"]'],
+                script: [classpath: [], sandbox: false, 
+                    script: 
+"""
+import jenkins.model.*
+  
+def resultArray = []
+def credentialId = 'Jenkins_Service_Account_AWS_AKI_SAK_Q_Username_Password'
+def awsSecretAccessKeyId = com.cloudbees.plugins.credentials.SystemCredentialsProvider.getInstance().getStore().getCredentials(com.cloudbees.plugins.credentials.domains.Domain.global()).find { it.getId().equals(credentialId) }.getUsername().toString()                        
+def awsSecretAccessKey = com.cloudbees.plugins.credentials.SystemCredentialsProvider.getInstance().getStore().getCredentials(com.cloudbees.plugins.credentials.domains.Domain.global()).find { it.getId().equals(credentialId) }.getPassword().toString()
+
+def psqlCommandOutput = ['env', "AWS_ACCESS_KEY_ID=\${awsSecretAccessKeyId}", 'env', "AWS_SECRET_ACCESS_KEY=\${awsSecretAccessKey}", "aws", "s3", "ls", "s3://q-ai-production-bucket/DBDumps/RDS/"].execute() | ['awk', '{print \$4}'].execute() 
+
+def outputStream = new StringBuffer()
+def errorStream = new StringBuffer()
+
+psqlCommandOutput.waitForProcessOutput(outputStream, errorStream)
+
+outputStream.toString().split().each { tarFile ->
+  def tarFileString = tarFile.toString()
+  resultArray.add(tarFileString)
+}
+ 
+return resultArray
+"""
+                ]
+            ]
+        ],
+        [$class: 'ChoiceParameter',
+            choiceType: 'PT_CHECKBOX',
+            description: "Select the destination studios which the database dump will be deployed in.",
+            name: 'destinationStudios',
+            script: [$class: 'GroovyScript',
+                fallbackScript: [classpath: [], sandbox: false, script: 'return ["Could not get components"]'],
+                script: [classpath: [], sandbox: false, 
+                    script: 
+"""
+return ["Homer"]
+"""
+                ]
+            ]
+        ]
+    ])
+])
+
+def parallelStages = [:]
+
+pipeline {
+    agent none
+    
+    stages {
+        stage('trigger database dump execution') {
+            when {
+                allOf {
+                    expression { params.tarFiles == '' }
+                }
+            }
+            agent {
+                docker {
+                    customWorkspace '/mnt/DB'
+                    label 'CJSlave01 || CJSlave02'
+                    registryUrl 'https://608104255617.dkr.ecr.us-east-1.amazonaws.com'
+                    image '608104255617.dkr.ecr.us-east-1.amazonaws.com/q-cue:create-dump'
+                    registryCredentialsId 'ecr:us-east-1:Jenkins_Service_Account_AWS_AKI_SAK_Q'
+                }
+            }
+            environment { 
+                DB_PORT="5432"
+                DATABASE="Q-Production" 
+                DB_VERSION="${params.rdsDbVersion}"
+                DB_TABLES="${params.dbTables}"
+                S3_BUCKET="q-ai-production-bucket/DBDumps/RDS"
+                DB_HOSTNAME="q-database.c2pv1aoazjru.us-east-1.rds.amazonaws.com"
+                AWS_JENKINS_CREDENTIALS_ID="Jenkins_Service_Account_AWS_AKI_SAK_Q" 
+                DB_USER_AND_PASSWORD=credentials("Postgres_User_Password_Database_Credentials")
+            }
+            steps{
+                script {
+                    def tablesArray = DB_TABLES.split(',')
+                    env.TRANSFORMED_DB_TABLES = tablesArray.collect { "-t $it" }.join(' ')
+                    def currentDate = sh(script: '/bin/bash -c "date +\\"%Y%m%d%H%M%S\\""', returnStdout: true).trim()
+                    env.DATA_NAME = "data_${BUILD_ID}_${currentDate}.dmp.gz"
+                    env.SCHEMA_NAME = "schema_${BUILD_ID}_${currentDate}.dmp.gz"
+                    env.TAR_NAME = "schema_and_data_dump_${BUILD_ID}_${DB_VERSION}_${currentDate}.tar.gz"
+                }
+                withCredentials([aws(credentialsId: "$AWS_JENKINS_CREDENTIALS_ID")]) {
+                    sh '''
+                        #!/bin/bash
+                        set -e
+
+                        echo "Creating schema dump"
+                        PGPASSWORD=\$DB_USER_AND_PASSWORD_PSW pg_dump -s --format plain --verbose --host=\$DB_HOSTNAME --port=\$DB_PORT --username=\$DB_USER_AND_PASSWORD_USR --dbname=\$DATABASE -Z0 | pigz > \$SCHEMA_NAME
+
+                        echo "Creating data dump"
+                        PGPASSWORD=\$DB_USER_AND_PASSWORD_PSW pg_dump -a -n public --verbose --host=\$DB_HOSTNAME --port=\$DB_PORT --username=\$DB_USER_AND_PASSWORD_USR --dbname=\$DATABASE \$TRANSFORMED_DB_TABLES -Z0 | pigz > \$DATA_NAME
+
+                        echo "Creating TAR file"
+                        tar -cvf \$TAR_NAME \$SCHEMA_NAME \$DATA_NAME  
+
+                        echo "Uploading dump tar $TAR_NAME to $S3_BUCKET"
+                        AWS_ACCESS_KEY_ID=\$AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY=\$AWS_SECRET_ACCESS_KEY aws s3 cp $TAR_NAME s3://\$S3_BUCKET/
+
+                        echo "Delete TAR, schema, data files"
+                        rm -f \$TAR_NAME \$SCHEMA_NAME \$DATA_NAME
+                    '''
+                }
+            }
+        }
+        stage("sync studios postgres with RDS dump") {              
+            steps {                 
+                script {                                        
+                    destinationStudios.split().each { studioAgent ->
+                        parallelStages["Deploy RDS dump on ${studioAgent}"] = {                             
+                            node("${studioAgent}") { 
+                                env.DB_PORT="5432"
+                                env.DB_HOSTNAME="localhost"
+                                env.DATABASE="q-data-db-prod" 
+                                env.S3_BUCKET="q-ai-production-bucket/DBDumps"
+                                env.AWS_JENKINS_CREDENTIALS_ID="Jenkins_Service_Account_AWS_AKI_SAK_Q"  
+                                env.TAR_NAME="${params.tarFile == '' ? env.TAR_NAME : params.tarFiles}"
+                                env.DB_USER_AND_PASSWORD="Studio_Postgres_User_Password_Database_Credentials"
+                                env.CURRENT_DATE = sh(script: '/bin/bash -c "date +\\"%Y%m%d%H%M%S\\""', returnStdout: true).trim()
+
+                                docker.withRegistry("https://608104255617.dkr.ecr.us-east-1.amazonaws.com", "ecr:us-east-1:$AWS_JENKINS_CREDENTIALS_ID") {
+                                    docker.image("q-cue:create-dump").inside('--network host') {
+                                        withCredentials([aws(credentialsId: "$AWS_JENKINS_CREDENTIALS_ID")]) {
+                                            withCredentials([usernamePassword(credentialsId: "$DB_USER_AND_PASSWORD", usernameVariable: 'DB_USER_AND_PASSWORD_USR', passwordVariable: 'DB_USER_AND_PASSWORD_PSW')]) {
+
+                                                 sh '''
+                                                    #!/bin/bash
+                                                    set -ex
+                                                    
+                                                    echo "Create dump of studio database"
+                                                    FILENAME="${NODE_NAME}_${BUILD_ID}_${CURRENT_DATE}.dmp.gz"
+                                                    PGPASSWORD=\$DB_USER_AND_PASSWORD_PSW pg_dumpall --host=\$DB_HOSTNAME --port=\$DB_PORT --username=\$DB_USER_AND_PASSWORD_USR | pigz > $FILENAME
+
+                                                    echo "Uploading dump tar $FILENAME to $S3_BUCKET/${NODE_NAME}"
+                                                    AWS_ACCESS_KEY_ID=\$AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY=\$AWS_SECRET_ACCESS_KEY aws s3 cp $FILENAME s3://\$S3_BUCKET/${NODE_NAME}/
+
+                                                    echo "Delete created dump"
+                                                    rm -f $FILENAME
+
+                                                    echo "Drop database \$DATABASE at studio"
+                                                    PGPASSWORD=\$DB_USER_AND_PASSWORD_PSW psql --host=\$DB_HOSTNAME --port=\$DB_PORT --username=\$DB_USER_AND_PASSWORD_USR -c \"DROP DATABASE IF EXISTS \\"$DATABASE\\";\"
+
+                                                    echo "Create database \$DATABASE at studio"
+                                                    PGPASSWORD=\$DB_USER_AND_PASSWORD_PSW psql --host=\$DB_HOSTNAME --port=\$DB_PORT --username=\$DB_USER_AND_PASSWORD_USR -c \"CREATE DATABASE \\"$DATABASE\\";\" 
+                                                    
+                                                '''
+
+sh '''
+#!/bin/bash
+set -ex
+echo "Create drop for database update"
+cat > drop.sql <<- EOF
+copy (SELECT 'ALTER TABLE '||nspname||'.\\"'||relname||'\\" DROP CONSTRAINT \\"'||conname||'\\";'
+FROM pg_constraint
+INNER JOIN pg_class ON conrelid=pg_class.oid
+INNER JOIN pg_namespace ON pg_namespace.oid=pg_class.relnamespace
+ORDER BY CASE WHEN contype='f' THEN 0 ELSE 1 END,contype,nspname,relname,conname) to '/tmp/droppingConstraints.sql';
+'''
+
+sh '''
+#!/bin/bash
+set -ex
+echo "Create add file for database update"
+cat > add.sql <<- EOF
+copy (SELECT 'ALTER TABLE '||nspname||'.\\"'||relname||'\\" ADD CONSTRAINT \\"'||conname||'\\" '|| pg_get_constraintdef(pg_constraint.oid)||';'
+FROM pg_constraint
+INNER JOIN pg_class ON conrelid=pg_class.oid
+INNER JOIN pg_namespace ON pg_namespace.oid=pg_class.relnamespace
+ORDER BY CASE WHEN contype='f' THEN 0 ELSE 1 END DESC,contype DESC,nspname DESC,relname DESC,conname DESC) to '/tmp/addingConstraint.sql';
+'''
+
+                                                sh '''
+                                                    #!/bin/bash
+                                                    set -ex
+
+                                                    echo "Downloading dump tar \$TAR_NAME from \$S3_BUCKET"
+                                                    AWS_ACCESS_KEY_ID=\$AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY=\$AWS_SECRET_ACCESS_KEY aws s3 cp s3://\$S3_BUCKET/RDS/\$TAR_NAME .
+
+                                                    echo "Unpack tar TAR file"
+                                                    tar -xvf \$TAR_NAME
+
+                                                    echo "Loading schema"
+                                                    zcat ./schema*.dmp.gz | PGPASSWORD=\$DB_USER_AND_PASSWORD_PSW psql --host=\$DB_HOSTNAME --port=\$DB_PORT --username=\$DB_USER_AND_PASSWORD_USR --dbname=\$DATABASE
+
+                                                    echo "Drop constraints"
+                                                    PGPASSWORD=\$DB_USER_AND_PASSWORD_PSW psql --host=\$DB_HOSTNAME --port=\$DB_PORT --username=\$DB_USER_AND_PASSWORD_USR --dbname=\$DATABASE < drop.sql
+
+                                                    echo "Loading data"
+                                                    zcat ./data*.dmp.gz | PGPASSWORD=\$DB_USER_AND_PASSWORD_PSW psql --host=\$DB_HOSTNAME --port=\$DB_PORT --username=\$DB_USER_AND_PASSWORD_USR --dbname=\$DATABASE 
+
+                                                    echo "Reindex database"    
+                                                    PGPASSWORD=\$DB_USER_AND_PASSWORD_PSW psql --host=\$DB_HOSTNAME --port=\$DB_PORT --username=\$DB_USER_AND_PASSWORD_USR --dbname=\$DATABASE -c \"reindex database \\"$DATABASE\\";\"
+
+                                                    echo "Reindex database"    
+                                                    PGPASSWORD=\$DB_USER_AND_PASSWORD_PSW psql --host=\$DB_HOSTNAME --port=\$DB_PORT --username=\$DB_USER_AND_PASSWORD_USR --dbname=\$DATABASE -c "VACUUM (FULL, ANALYZE,VERBOSE);"
+
+                                                    echo "Readd constraints"
+                                                    PGPASSWORD=\$DB_USER_AND_PASSWORD_PSW psql --host=\$DB_HOSTNAME --port=\$DB_PORT --username=\$DB_USER_AND_PASSWORD_USR --dbname=\$DATABASE < add.sql
+
+                                                    echo "Delete TAR, schema, data files"
+                                                    rm -f *.tar.gz *.dmp.gz
+                                                '''
+                                            }
+                                        }
+                                    }
+                                }    
+                            }                         
+                        }                      
+                    }                    
+                    parallel parallelStages                 
+                }             
+            }         
+        }
+    }
+}

@@ -1,0 +1,24 @@
+{
+    "services": [
+        "remote_camera_processor_service",
+        "remote_right_camera_processor_service",
+        "monitor_service",
+        "keyboard_listener_service",
+        "system_state_machine_service",
+        "osd_service",
+        "gst_audio_service",
+        "qad_service",
+        "tag_recorder_service",
+        "webcam_processor_service",
+        "left_webcam_processor_service",
+        "remote_feature_calc_service",
+        "predict_service",
+        "remote_imu_peripherals_service"
+    ],
+    "system_overrides": {},
+    "service_overrides": {
+        "predict_service": {
+            "viewer": "cli"
+        }
+    }
+}

@@ -1,0 +1,65 @@
+pipeline {
+    agent { label 'CJSlave01 || CJSlave02' }
+    parameters {
+        string(name: 'INPUT_BRANCH_NAME', defaultValue: '')
+    }
+    environment {
+        ECR_REGISTRY_REGION = 'us-east-1'
+        DOCKER_RELEASE_TAG = "${env.BRANCH_NAME}"
+        ECR_CREDENTIAL_ID = 'Jenkins_Service_Account_AWS_AKI_SAK_Q'
+        ECR_REGISTRY = 'https://608104255617.dkr.ecr.us-east-1.amazonaws.com'
+        ECR_FULL_CREDENTIAL = "ecr:${ECR_REGISTRY_REGION}:${ECR_CREDENTIAL_ID}"
+        DOCKER_TAG_REPO_PATH = '608104255617.dkr.ecr.us-east-1.amazonaws.com/q-cue'
+    }
+    stages {
+        stage('Checkout required repos') {
+            steps {
+                script {
+                    def REPO_LIST_TO_CHECKOUT = ['q-data-airflow']
+                    REPO_LIST_TO_CHECKOUT.each { repo_name ->
+                        checkout(
+                            [
+                                $class: 'GitSCM',
+                                branches: [[name: "${env.BRANCH_NAME}"]],
+                                doGenerateSubmoduleConfigurations: false,
+                                extensions: [
+                                    [$class: 'RelativeTargetDirectory', relativeTargetDir : "${repo_name}"]
+                                ],
+                                submoduleCfg: [],
+                                userRemoteConfigs: [
+                                    [credentialsId: 'Jenkins-Master-User', url: "git@github.com:Q-cue-ai/${repo_name}.git"],
+                                ],
+                            ]
+                        )
+                    }
+                }
+            }
+        } 
+        stage('build docker image') {
+            steps {
+                dir('q-data-airflow/docker') {
+                    script {
+                        DOCKER_FULL_TAG = "${DOCKER_TAG_REPO_PATH}:QDP-${DOCKER_RELEASE_TAG}"
+                        DOCKER_IMAGE = docker.build("${DOCKER_FULL_TAG}", "--no-cache -f ./QDP.dockerfile .")
+                    }
+                }
+            }
+        }
+        stage('push to docker registry') {
+            steps {
+                script {
+                    docker.withRegistry( ECR_REGISTRY, ECR_FULL_CREDENTIAL) {
+                        DOCKER_IMAGE.push()   
+                    }
+                }
+            }
+        }
+        stage('docker image cleanup') {
+            steps {
+                script {
+                    sh "docker rmi ${DOCKER_FULL_TAG} --force"
+                }
+            }
+        }
+    }
+}

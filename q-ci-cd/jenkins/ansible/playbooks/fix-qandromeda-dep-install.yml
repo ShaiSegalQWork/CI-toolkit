@@ -1,0 +1,181 @@
+---
+- name: Run script on remote machines
+  hosts: all
+  gather_facts: false
+  become: true
+
+
+  tasks:
+
+    - name: "Check if AWS CLI v2 is installed"
+      ansible.builtin.command: aws --version
+      register: aws_cli_installed
+      ignore_errors: true
+      changed_when: aws_cli_installed.rc != 0
+
+    - name: "Install dependencies"
+      ansible.builtin.apt:
+        name: "{{ item }}"
+        state: present
+      loop:
+        - curl
+        - unzip
+        - python3-gi
+        - python3-pip
+        - python3-gi-cairo
+        - gir1.2-gtk-3.0
+        - libgirepository1.0-dev
+      become: true
+
+    - name: Ensure user group exists
+      ansible.builtin.group:
+        name: andromeda
+        state: present
+
+    - name: "Change group of venv to andromeda"
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        mode: '0775'
+        owner: recorder
+        group: andromeda
+        recurse: true
+      with_items:
+        - "{{ andromeda_venv_path }}"
+
+    - name: "Remove venv folder"
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      with_items:
+        - "{{ andromeda_venv_path }}"
+      become: true
+      become_user: recorder
+
+    - name: "Create required paths"
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        mode: '0775'
+        owner: recorder
+        group: andromeda
+      with_items:
+        - "{{ andromeda_venv_path }}"
+        - "{{ andromeda_venv_base_path }}"
+      become: true
+      become_user: recorder
+
+
+    - name: Install uv using pip
+      ansible.builtin.pip:
+        name: uv
+        executable: pip3
+
+
+    - name: Create a virtual environment using uv
+      ansible.builtin.shell:
+        cmd: |
+            set -o pipefail
+            uv venv --seed --python {{ python_version }} {{ andromeda_venv_path }}
+        executable: /bin/bash
+      register: venv_creation
+      changed_when: false
+      become: true
+      become_user: recorder
+
+
+    - name: Verify if the virtual environment was created
+      ansible.builtin.stat:
+        path: "{{ andromeda_venv_path }}"
+      register: venv_check
+
+    - name: Fail if the virtual environment does not exist
+      ansible.builtin.fail:
+        msg: "Virtual environment creation failed!"
+      when: not venv_check.stat.exists
+
+    - name: Delete uv.toml first (force recreation)
+      ansible.builtin.file:
+        path: "{{ andromeda_venv_base_path }}/uv.toml"
+        state: absent
+      become: true
+      become_user: recorder
+
+    - name: Create pyproject.toml
+      ansible.builtin.copy:
+        dest: "{{ andromeda_venv_base_path }}/uv.toml"
+        content: |
+          compile-bytecode = true
+          build-constraint-dependencies = [
+              "cmake<4"
+          ]
+          [pip]
+          index-url = "https://pypi.q.ai/root/pypi/+simple"
+          extra-index-url = [
+              "https://pypi.q.ai/root/pypi/+simple",
+              "https://pypi.q.ai/signals/production/+simple",
+              "https://pypi.q.ai/machine_learning/production/+simple",
+              "https://pypi.q.ai/software/staging/+simple",
+              "https://pypi.q.ai/software/production/+simple",
+              "https://pypi.q.ai/atoms/production/+simple"
+          ]
+          index-strategy = "unsafe-best-match"
+          only-binary = ["vext-gi"]
+        mode: '0777'
+      become: true
+      become_user: recorder
+
+
+    - name: Install Python packages using uv
+      ansible.builtin.shell:
+        cmd: |
+            set -o pipefail
+            cat {{ andromeda_venv_base_path }}/uv.toml
+            source {{ andromeda_venv_path }}/bin/activate
+            uv pip install {{ andromeda_version }} --config-file {{ andromeda_venv_base_path }}/uv.toml {{ extra_pip_args }} --native-tls
+        executable: /bin/bash
+      register: uv_output
+      changed_when: "'Successfully installed' in uv_output.stdout"
+      become: true
+      become_user: recorder
+
+
+
+    - name: Get installed package version
+      ansible.builtin.shell:
+        cmd: |
+            set -o pipefail
+            echo $(source {{ andromeda_venv_path }}/bin/activate && uv pip freeze | grep andromeda) > version_installed_20250310023905
+            cat version_installed_20250310023905
+        executable: /bin/bash
+      changed_when: "'Successfully installed' in uv_output.stdout"
+      register: pip_output
+      become: true
+      become_user: recorder
+
+
+    - name: Print installed version
+      ansible.builtin.debug:
+        msg: "Installed version: {{ pip_output.stdout }}"
+
+
+    - name: Check if Installed package version matches
+      when: pip_output.stdout == andromeda_version
+      ansible.builtin.debug:
+        msg: "🎉 Success! The installed package version is {{ pip_output.stdout }} and matches expected version {{ andromeda_version }}."
+
+    - name: If Installed version does not match
+      when: pip_output.stdout != andromeda_version
+      ansible.builtin.fail:
+        msg: "❌ Mismatch! Installed version is {{ pip_output.stdout }}, but expected version is {{ andromeda_version }}."
+
+    - name: "Validate Change group of venv to andromeda"
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        mode: '0775'
+        owner: recorder
+        group: andromeda
+        recurse: true
+      with_items:
+        - "{{ andromeda_venv_path }}"

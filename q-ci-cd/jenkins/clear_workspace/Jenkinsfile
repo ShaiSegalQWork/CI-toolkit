@@ -1,0 +1,54 @@
+pipeline {
+    agent none
+    stages {
+        stage('clear workspace macos agents') {
+            matrix {
+                axes {
+                    axis {
+                        name 'MLABEL'
+                        values 'MSlave03.q.ai', 'MSlave02.q.ai', 'MSlave01.q.ai'
+                    }
+                }
+                stages{
+                    stage ('clear workspace') {
+                        agent {label "${MLABEL}"}
+                        steps {
+                            script {
+                                def job_directory_path = '/var/lib/jenkins/workspace/'
+
+                                def current_job_name = env.JOB_NAME
+
+                                sh "find ${job_directory_path} -mindepth 1 -maxdepth 1 -type d -name '*' ! -name '$current_job_name*' -exec rm -rf {} \\;"
+
+                            }
+                        }    
+                    }
+                }
+            }    
+        }
+        stage('clear workspace ubuntu agents') {
+            matrix {
+                axes {
+                    axis {
+                        name 'JLABEL'
+                        values 'JSlave03.q.ai', 'JSlave02.q.ai', 'JSlave01.q.ai'
+                    }
+                }
+                stages {
+                    stage('clear workspace') {
+                        agent {label "${JLABEL}"}
+                        steps {
+                            script {
+                                def job_directory_path = '/var/lib/jenkins/workspace/'
+
+                                def current_job_name = env.JOB_NAME
+
+                                sh "find ${job_directory_path} -mindepth 1 -maxdepth 1 -type d -name 'q-*' ! -name '$current_job_name*' -exec rm -rf {} \\;"
+                            }
+                        }    
+                    }
+                }
+            }
+        }
+    }
+}

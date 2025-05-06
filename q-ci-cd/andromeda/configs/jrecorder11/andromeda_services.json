@@ -1,0 +1,38 @@
+{
+    "osd_service": {
+        "full_screen": true
+    },
+    "webcam_processor_service": {
+        "camera_params": {
+            "device": "usb-0000:00:14.0-7"
+        }
+    },
+    "left_webcam_processor_service": {
+        "camera_params": {
+            "device": "usb-0000:00:14.0-1"
+        }
+    },
+    "gst_audio_service": {
+        "pipeline": "pulsesrc device=alsa_input.usb-C-Media_Electronics_Inc._USB_PnP_Sound_Device-00.mono-fallback ! audioconvert ! wavenc ! queue ! filesink name=sink"
+    },
+    "remote_camera_processor_service": {
+        "camera_params": {
+            "device": "platform:tegra-capture-vi:0"
+        },
+        "crop": {
+            "top": 800,
+            "left": 850
+        },
+        "q_sensor_serial": "V1.1-SN3"
+    },
+    "remote_right_camera_processor_service": {
+        "camera_params": {
+            "device": "platform:tegra-capture-vi:2"
+        },
+        "crop": {
+            "top": 750,
+            "left": 1200
+        },
+        "q_sensor_serial": "V1.1-SN4"
+    }
+}

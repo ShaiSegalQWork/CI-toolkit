@@ -1,0 +1,156 @@
+pipeline {
+    agent none
+    triggers { cron('0 4 * * *') }
+    stages {
+        stage('build q-commons') {
+            parallel{
+                stage('build q-commons on linux amd64'){
+                    agent {
+                        docker {
+                            image 'python:3.10.12'
+                            label 'JSlave01.q.ai || JSlave02.q.ai'
+                            args '--platform=linux/amd64'
+                        }
+                    }
+                    stages{
+                        stage('checkout q-commons') {
+                            steps {
+                                checkout (
+                                    [
+                                        $class: 'GitSCM',
+                                        branches: [[name: 'master']],
+                                        doGenerateSubmoduleConfigurations: false,
+                                        extensions: [[$class: 'RelativeTargetDirectory', relativeTargetDir: 'q-commons']],
+                                        submoduleCfg: [],
+                                        userRemoteConfigs: [[credentialsId: 'Jenkins-Master-User',url: 'git@github.com:Q-cue-ai/q-commons.git']],
+                                    ]
+                                )
+                            }
+                        }
+                        stage('build'){
+                            steps {
+                                dir('q-commons') {
+                                    sh 'python3.10 setup.py bdist_wheel -p `python3.10 -c "import sysconfig;print(sysconfig.get_platform())"`'
+                                }
+                            }
+                        }
+                        stage('deploy to pypi server'){
+                            environment { 
+                                PYPI_ACCESS_USER = credentials('Jenkins_Service_Account_User') 
+                                PYPI_ACCESS_KEY = credentials('Jenkins_Service_Account_Password') 
+                                DOMAIN_SSL_CERTIFICATE = credentials('Domain_SSL_Certificate') 
+                            }
+                            steps {
+                                dir('q-commons/dist') {
+                                    sh 'python -m pip install -t . twine'
+                                    sh 'python -m twine upload --repository-url https://pypi.q.ai/software/development ./*.whl --cert "\$DOMAIN_SSL_CERTIFICATE" -u "\$PYPI_ACCESS_USER" -p "\$PYPI_ACCESS_KEY"'
+                                }
+                            }
+                        }
+                        stage('cleanup'){
+                            steps{
+                                cleanWs()
+                            }
+                        }
+                    }
+                }
+                stage('build q-commons on linux arm64'){
+                    agent {
+                        docker {
+                            image 'python:3.10.12'
+                            label 'JSlave01.q.ai || JSlave02.q.ai'
+                            args '--platform=linux/arm64'
+                        }
+                    }
+                    stages{
+                        stage('checkout q-commons') {
+                            steps {
+                                checkout (
+                                    [
+                                        $class: 'GitSCM',
+                                        branches: [[name: 'master']],
+                                        doGenerateSubmoduleConfigurations: false,
+                                        extensions: [[$class: 'RelativeTargetDirectory', relativeTargetDir: 'q-commons']],
+                                        submoduleCfg: [],
+                                        userRemoteConfigs: [[credentialsId: 'Jenkins-Master-User',url: 'git@github.com:Q-cue-ai/q-commons.git']],
+                                    ]
+                                )
+                            }
+                        }
+                        stage('build'){
+                            steps {
+                                dir('q-commons') {
+                                    sh 'python3.10 setup.py bdist_wheel -p `python3.10 -c "import sysconfig;print(sysconfig.get_platform())"`'
+                                }
+                            }
+                        }
+                        stage('deploy to pypi server'){
+                            environment { 
+                                PYPI_ACCESS_USER = credentials('Jenkins_Service_Account_User') 
+                                PYPI_ACCESS_KEY = credentials('Jenkins_Service_Account_Password') 
+                                DOMAIN_SSL_CERTIFICATE = credentials('Domain_SSL_Certificate') 
+                            }
+                            steps {
+                                dir('q-commons/dist') {
+                                    sh 'python -m pip install -t . twine'
+                                    sh 'python -m twine upload --repository-url "https://pypi.q.ai/software/development" ./*.whl --cert "\$DOMAIN_SSL_CERTIFICATE" -u "\$PYPI_ACCESS_USER" -p "\$PYPI_ACCESS_KEY"'
+                                }
+                            }
+                        }
+                        stage('cleanup'){
+                            steps{
+                                cleanWs()
+                            }
+                        }
+                    }
+                }
+                stage('build q-commons on macos arm64'){
+                    agent { 
+                        label 'Operator01.q.ai'
+                    }
+                    stages{
+                        stage('checkout q-commons') {
+                            steps {
+                                checkout (
+                                    [
+                                        $class: 'GitSCM',
+                                        branches: [[name: "master"]],
+                                        doGenerateSubmoduleConfigurations: false,
+                                        extensions: [[$class: 'RelativeTargetDirectory', relativeTargetDir : 'q-commons']],
+                                        submoduleCfg: [],
+                                        userRemoteConfigs: [[credentialsId: 'Jenkins-Master-User',url: 'git@github.com:Q-cue-ai/q-commons.git']],
+                                    ]
+                                )
+                            }
+                        }
+                        stage('build'){
+                            steps {
+                                dir ('q-commons') {
+                                    sh 'python3.10 setup.py bdist_wheel -p macosx-10.9-universal2'
+                                }
+                            }
+                        }
+                        stage('deploy to pypi server'){
+                            environment { 
+                                PYPI_ACCESS_USER = credentials('Jenkins_Service_Account_User') 
+                                PYPI_ACCESS_KEY = credentials('Jenkins_Service_Account_Password') 
+                                DOMAIN_SSL_CERTIFICATE = credentials('Domain_SSL_Certificate') 
+                            }
+                            steps {
+                                dir('q-commons/dist') {
+                                        sh 'python3.10 -m pip install -t . twine'
+                                        sh 'python3.10 -m twine upload --repository-url "https://pypi.q.ai/software/development" ./*.whl --cert "\$DOMAIN_SSL_CERTIFICATE" -u "\$PYPI_ACCESS_USER" -p "\$PYPI_ACCESS_KEY"'
+                                }                                
+                            }
+                        }
+                        stage('cleanup'){
+                            steps{
+                                cleanWs()
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

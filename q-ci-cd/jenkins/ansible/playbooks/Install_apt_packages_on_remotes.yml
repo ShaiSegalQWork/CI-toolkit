@@ -1,0 +1,15 @@
+---
+- name: Install apt packages on remotes
+  hosts: all
+  gather_facts: false
+  vars:
+     apt_packages: "{{ apt_packages_input }}"
+
+  tasks:
+     - name: "Update apt cache"
+       ansible.builtin.apt:
+          update_cache: true
+     - name: Install apt packages
+       ansible.builtin.apt:
+          name: "{{ apt_packages }}"
+          state: present

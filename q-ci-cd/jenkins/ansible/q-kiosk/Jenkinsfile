@@ -1,0 +1,244 @@
+properties([
+    parameters([
+        [$class: 'ChoiceParameter',
+            choiceType: 'PT_SINGLE_SELECT',
+            description: "Select version type.",
+            name: 'versionType',
+            script: [$class: 'GroovyScript',
+                fallbackScript: [classpath: [], sandbox: false, script: 'return ["Could not get components"]'],
+                script: [classpath: [], sandbox: false, 
+                    script: 
+"""
+return ["Production:selected", "Staging"]
+"""
+                ]
+            ]
+        ],
+        [$class: 'CascadeChoiceParameter',
+            choiceType: 'PT_SINGLE_SELECT',
+            description: "List of versions to select for type.",
+            name: 'versionToDistribute',
+            referencedParameters: 'versionType',
+            script: [$class: 'GroovyScript',
+                fallbackScript: [classpath: [], sandbox: false, script: 'return ["Could not get components"]'],
+                script: [classpath: [], sandbox: false, 
+                    script: 
+"""
+import jenkins.model.Jenkins
+import com.cloudbees.plugins.credentials.CredentialsProvider
+import com.cloudbees.jenkins.plugins.awscredentials.AWSCredentialsImpl
+  
+def resultArray = []
+def credentialsId = 'Jenkins_Service_Account_AWS_AKI_SAK'
+
+def credentials = CredentialsProvider.lookupCredentials(
+	AWSCredentialsImpl,
+    Jenkins.getInstanceOrNull(),
+    null,
+    null
+).find { it.id == credentialsId }
+
+def awsSecretAccessKeyId = credentials.accessKey
+def awsSecretAccessKey = credentials.secretKey.plainText
+def outputStream = new StringBuffer()
+
+if (versionType.equals("Production")) {
+    
+    def awsS3ListCommand = ["env", "AWS_ACCESS_KEY_ID=\${awsSecretAccessKeyId}", "AWS_SECRET_ACCESS_KEY=\${awsSecretAccessKey}", "aws", "s3", "ls", "s3://q-ai-production-bucket/Kiosk/Production/"].execute() | ['awk', '{print \$4}'].execute()
+    
+    awsS3ListCommand.waitForProcessOutput(outputStream, System.err)
+
+} else if (versionType.equals("Staging")) {
+    
+    def awsS3ListCommand = ["env", "AWS_ACCESS_KEY_ID=\${awsSecretAccessKeyId}", "AWS_SECRET_ACCESS_KEY=\${awsSecretAccessKey}", "aws", "s3", "ls", "s3://q-ai-production-bucket/Kiosk/Staging/"].execute() | ['awk', '{print \$4}'].execute()
+    
+    awsS3ListCommand.waitForProcessOutput(outputStream, System.err)
+
+} 
+
+outputStream.toString().split().sort().reverse().each { version ->
+  def versionString = version.toString()
+  resultArray.add(versionString)
+}
+ 
+return resultArray
+"""
+                ]
+            ]
+        ],
+        [$class: 'ChoiceParameter',
+            choiceType: 'PT_CHECKBOX',
+            description: "Select recorders and jrecorders to update. Notice, requires additional approval after triggering!",
+            filterLength: 1,
+            filterable: true,
+            name: 'RECORDERS_AND_JRECORDERS_TO_UPDATE',
+            script: [$class: 'GroovyScript',
+                fallbackScript: [classpath: [], sandbox: false, script: 'return ["Could not get component"]'],
+                script: [classpath: [], sandbox: false, 
+                    script: 
+"""
+import jenkins.model.*
+
+def CREDENTIAL_ID = 'Jenkins_Service_Account_User_Password'
+
+def USERNAME = com.cloudbees.plugins.credentials.SystemCredentialsProvider.getInstance().getStore().getCredentials(com.cloudbees.plugins.credentials.domains.Domain.global()).find { it.getId().equals(CREDENTIAL_ID) }.getUsername().toString()                        
+
+def PASSWORD = com.cloudbees.plugins.credentials.SystemCredentialsProvider.getInstance().getStore().getCredentials(com.cloudbees.plugins.credentials.domains.Domain.global()).find { it.getId().equals(CREDENTIAL_ID) }.getPassword().toString()
+
+def command_1 = ["/var/lib/jenkins/.local/bin/adidnsdump", "--user", "q\\\\"+USERNAME, "--password" , PASSWORD,  "--resolve", "dc01.q.ai"]
+
+def process_1 = new ProcessBuilder(command_1).start()
+
+process_1.waitFor()
+
+def filePath = "/var/lib/jenkins/records.csv"  
+
+def resultArray = []
+
+new File(filePath).eachLine { line ->
+
+def values = line.split(',')
+
+if (values.size() >= 2 && line.contains("recorder")) {
+                            
+    def lastValue = values[-1]
+    def secondToLastValue = values[-2]
+
+    def composedString = "\${secondToLastValue}, \${lastValue}"
+
+    resultArray.add(composedString)
+
+    }
+}
+
+return resultArray
+"""
+                ]
+            ]
+        ]
+    ])
+])
+
+pipeline {
+    agent {label 'JSlave02.q.ai'}
+    parameters {
+        string(name: 'PARAMETER_RECORDERS_AND_JRECORDERS_TO_UPDATE', description: 'This parameter is set by other pipelines that trigger this job. Dont set it when triggering.' ,defaultValue: '')
+        string(name: 'CUSTOM_PASSWORD', defaultValue: '', description: 'Pre-Defiend custom password - Use if you want to use a custom password instead of the defualt password for recorders.' )
+        choice(name: 'TARGET_SITE', choices: ['IL'], description: 'Select the target site')
+    }
+    environment {
+        S3_TYPE="${params.versionType}"
+        ANSIBLE_HOST_KEY_CHECKING="False"
+        ANSIBLE_CONFIG="./config/ansible.cfg"
+        TAG_TO_UPDATE="${params.versionToDistribute}"
+        RECORDERS_AND_JRECORDERS_TO_UPDATE="${params.PARAMETER_RECORDERS_AND_JRECORDERS_TO_UPDATE ? params.PARAMETER_RECORDERS_AND_JRECORDERS_TO_UPDATE : params.RECORDERS_AND_JRECORDERS_TO_UPDATE}"
+        CUSTOM_PASSWORD="${params.CUSTOM_PASSWORD}"
+        Q_FARM_BECOME_PASSWORD = credentials('Q_FARM_BECOME_PASSWORD')
+    }
+    stages {
+        stage('continue or stop pipeline') {
+            steps {
+                script {
+                    SORTED_OUTPUT = sh returnStdout: true, script: """#!/usr/bin/env bash
+                        IFS=',' read -ra elements <<< "$RECORDERS_AND_JRECORDERS_TO_UPDATE"
+                        for ((i = 0; i < \${#elements[@]}; i += 2)); do 
+                          echo "\${elements[i]}" 
+                        done """
+                }
+                timeout(time: 1, unit: 'MINUTES') {
+                    input message: "Do you wish continue update of TAG: ${env.TAG_TO_UPDATE} on the following recorders\\jrecorders:\n${SORTED_OUTPUT}", ok: 'Continue'
+                }
+            }
+        }
+stage('Set Credential Based on Site') {
+    steps {
+        script {
+            // If CUSTOM_PASSWORD was supplied → use it and skip Jenkins‑credentials
+            if (params.CUSTOM_PASSWORD?.trim()) {
+                env.BECOME_PASS = params.CUSTOM_PASSWORD.trim()
+                env.CRED_ID     = ''                 // nothing to fetch later
+                echo "🔒 Using custom password from parameter."
+            } else {
+                // Map TARGET_SITE → Jenkins secret ID
+                switch (params.TARGET_SITE) {
+                    case 'IL':
+                        env.CRED_ID = 'BECOME_PASS_SITE_IL'
+                        break
+                    default:
+                        error "❌ Unknown site '${params.TARGET_SITE}'. Please fix and re‑run."
+                }
+                echo "🔑 Will fetch password from credentialsId='${env.CRED_ID}'."
+            }
+        }
+    }
+}
+
+stage('Run Ansible Playbook') {
+    steps {
+        withCredentials([
+            [$class: 'AmazonWebServicesCredentialsBinding',
+             credentialsId: 'Jenkins_Service_Account_AWS_AKI_SAK',
+             accessKeyVariable: 'AWS_ACCESS_KEY_ID',
+             secretKeyVariable: 'AWS_SECRET_ACCESS_KEY']
+        ]) {
+            dir('jenkins/ansible') {
+                script {
+                    // Helper closure so we don’t duplicate the two ansiblePlaybook calls
+                    def runPlays = {
+                        ansiblePlaybook(
+                            playbook: './playbooks/test_connection_playbook.yml',
+                            inventory: './inventory/ansible_dynamic_inventory.py',
+                            credentialsId: 'Ansible_Distribution_Username_SSH_Key',
+                            colorized: true
+                        )
+                        ansiblePlaybook(
+                            playbook: './playbooks/install_andromeda_kiosk_playbook.yml',
+                            inventory: './inventory/ansible_dynamic_inventory.py',
+                            credentialsId: 'Ansible_Distribution_Username_SSH_Key',
+                            colorized: true,
+                            extraVars: [
+                                S3_TYPE                : env.S3_TYPE,
+                                TAG_TO_UPDATE          : env.TAG_TO_UPDATE,
+                                AWS_ACCESS_KEY_ID      : env.AWS_ACCESS_KEY_ID,
+                                AWS_SECRET_ACCESS_KEY  : env.AWS_SECRET_ACCESS_KEY,
+                                ansible_become_password : env.BECOME_PASS
+                            ]
+                        )
+                    }
+
+                    if (env.CRED_ID) {
+                        /* No custom password → pull it from Jenkins Credentials */
+                        withCredentials([string(credentialsId: env.CRED_ID,
+                                                variable: 'BECOME_PASS')]) {
+                            runPlays()
+                        }
+                    } else {
+                        /* Custom password already in env.BECOME_PASS */
+                        runPlays()
+                    }
+                }
+            }
+        }
+    }
+}      
+    }
+        post { 
+        success { 
+            slackSend(channel: "C05LB9KD9U7", message: "BUILD: ${env.JOB_NAME} number ${env.BUILD_ID} succeeded \nURL: ${env.RUN_DISPLAY_URL}", token: "Slack-Bot", color: "good")
+            emailext attachLog: true, 
+                     to: 'lior.mizrahi@q.ai, eran.roll@q.ai, ofir.rokach@q.ai, $BUILD_USER@q.ai', 
+                     subject: 'A new version was successfully deployed',
+                     body: 'Version: $TAG_TO_UPDATE<br> Recording Stations: $RECORDERS_AND_JRECORDERS_TO_UPDATE<br> Deployed by: $BUILD_USER<br> Jenkins URL: $RUN_DISPLAY_URL'
+        }
+        failure { 
+            slackSend(channel: "C05LB9KD9U7", message: "BUILD: ${env.JOB_NAME} number ${env.BUILD_ID} failed \nURL: ${env.RUN_DISPLAY_URL}", token: "Slack-Bot", color: "danger")
+            emailext attachLog: true, 
+                     to: 'lior.mizrahi@q.ai, eran.roll@q.ai, ofir.rokach@q.ai, $BUILD_USER@q.ai', 
+                     subject: 'A new version failed to deploy', 
+                     body: 'Version: $TAG_TO_UPDATE<br> Recording Stations: $RECORDERS_AND_JRECORDERS_TO_UPDATE<br> Deployed by: $BUILD_USER<br> Jenkins URL: $RUN_DISPLAY_URL'
+        }
+        aborted { 
+            slackSend(channel: "C05LB9KD9U7", message: "BUILD: ${env.JOB_NAME} number ${env.BUILD_ID} aborted \nURL: ${env.RUN_DISPLAY_URL}", token: "Slack-Bot", color: "warning")
+        }
+    }
+}

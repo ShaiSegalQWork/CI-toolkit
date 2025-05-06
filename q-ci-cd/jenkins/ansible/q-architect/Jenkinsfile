@@ -1,0 +1,135 @@
+properties([
+    parameters([
+        [$class: 'ChoiceParameter',
+            choiceType: 'PT_CHECKBOX',
+            description: "Select jetfires that will recieve q-architect update. Notice, requires additional approval after triggering!",
+            filterLength: 1,
+            name: 'JETFIRES_TO_UPDATE',
+            script: [$class: 'GroovyScript',
+                fallbackScript: [classpath: [], sandbox: false, script: 'return ["Could not get component"]'],
+                script: [classpath: [], sandbox: false, 
+                    script: 
+"""
+import jenkins.model.*
+
+def credentialsId = 'Jenkins_Service_Account_User_Password'
+
+def username = com.cloudbees.plugins.credentials.SystemCredentialsProvider.getInstance().getStore().getCredentials(com.cloudbees.plugins.credentials.domains.Domain.global()).find { it.getId().equals(credentialsId) }.getUsername().toString()                        
+
+def password = com.cloudbees.plugins.credentials.SystemCredentialsProvider.getInstance().getStore().getCredentials(com.cloudbees.plugins.credentials.domains.Domain.global()).find { it.getId().equals(credentialsId) }.getPassword().toString()
+
+def command_1 = ["/var/lib/jenkins/.local/bin/adidnsdump", "--user", "q\\\\"+username, "--password" , password,  "--resolve", "dc01.q.ai"]
+
+def process_1 = new ProcessBuilder(command_1).start()
+
+process_1.waitFor()
+
+def filePath = "/var/lib/jenkins/records.csv"  
+
+def resultArray = []
+
+new File(filePath).eachLine { line ->
+
+def values = line.split(',')
+
+if (values.size() >= 2 && line.contains("jetfire")) {
+                            
+    def lastValue = values[-1]
+    def secondToLastValue = values[-2]
+
+    def composedString = "\${secondToLastValue}, \${lastValue}"
+
+    resultArray.add(composedString)
+
+    }
+}
+
+return resultArray
+"""
+                ]
+            ]
+        ]
+    ])
+])
+
+pipeline {
+    agent {label 'JSlave02.q.ai'}
+    options {
+        ansiColor('xterm')
+    }
+    parameters {
+        string(name: 'PARAMETER_JETFIRES_TO_UPDATE', description: 'This parameter is set by other pipelines that trigger this job. Dont set it when triggering.' ,defaultValue: '')
+        gitParameter description: "Tag from q-architect to use when updating jetfire. Notice, requires additional approval after triggering!", defaultValue: 'None', branchFilter: 'origin/(.*)', tagFilter: 'v*', name: 'DOCKER_TAG_TO_DISTRIBUTE', type: 'PT_BRANCH_TAG', sortMode: 'DESCENDING_SMART', useRepository: 'git@github.com:Q-cue-ai/q-architect.git' 
+    }
+    environment {
+        ANSIBLE_HOST_KEY_CHECKING="False"
+        ANSIBLE_CONFIG="./config/ansible.cfg"
+        ANSIBLE_BECOME_PASSWORD=credentials('Jetfire_User_Password')
+        DOCKER_REGISTRY_USERNAME=credentials('Jenkins_Service_Account_User')
+        DOCKER_TAG_TO_UPDATE="${params.DOCKER_TAG_TO_DISTRIBUTE.substring(1)}"
+        DOCKER_REGISTRY_PASSWORD=credentials('Jenkins_Service_Account_Password')
+        ANSIBLE_PRIVATE_DISTRIBUTION_KEY=credentials('Ansible_Private_Distribution_Key') 
+        Q_ARCHITECT_DB_CONNECTION_STRING=credentials('Database_Connection_String_For_Q_Architect')
+        JETFIRES_TO_UPDATE="${params.PARAMETER_JETFIRES_TO_UPDATE ? params.PARAMETER_JETFIRES_TO_UPDATE : params.JETFIRES_TO_UPDATE}"
+    }
+    stages {
+        stage('continue or stop pipeline'){
+            steps {
+                script {
+                    SORTED_OUTPUT = sh returnStdout: true, script: """#!/usr/bin/env bash
+                        IFS=',' read -ra elements <<< "$JETFIRES_TO_UPDATE"
+                        for ((i = 0; i < \${#elements[@]}; i += 2)); do 
+                          echo "\${elements[i]}" 
+                        done """
+                }
+                timeout(time: 2, unit: 'MINUTES') {
+                    input message: "Do you wish continue update of q-architect dokcer image tag: ${DOCKER_TAG_TO_UPDATE} on the following jetfires:\n${SORTED_OUTPUT}", ok: 'Continue'
+                }
+            }
+        }
+        stage('checkout q-architect') {
+            steps {
+                checkout(
+                    [
+                        $class: 'GitSCM',
+                        branches: [[name: "${DOCKER_TAG_TO_DISTRIBUTE}"]],
+                        doGenerateSubmoduleConfigurations: false,
+                        extensions: [
+                            [$class: 'RelativeTargetDirectory', relativeTargetDir : 'q-architect']
+                        ],
+                        submoduleCfg: [],
+                        userRemoteConfigs: [[credentialsId: 'Jenkins-Master-User',url: 'git@github.com:Q-cue-ai/q-architect.git']],
+                    ]
+                )
+                sh 'mkdir -p ./jenkins/ansible/playbooks/templates && cp ./q-architect/config-template.yaml.j2 ./jenkins/ansible/playbooks/templates/config-template.yaml.j2'
+            }
+        }
+        stage('Run ansible playbook') {
+            steps {
+                dir('jenkins/ansible') {
+                    sh 'ansible-playbook --private-key=\"\$ANSIBLE_PRIVATE_DISTRIBUTION_KEY\" -i ./inventory/ansible_dynamic_inventory.py ./playbooks/test_connection_playbook.yml'
+                    sh 'ansible-playbook --private-key=\"\$ANSIBLE_PRIVATE_DISTRIBUTION_KEY\" -i ./inventory/ansible_dynamic_inventory.py ./playbooks/update_architect_docker_playbook.yml --extra-vars \"ansible_become_password=\"\$ANSIBLE_BECOME_PASSWORD\" db_connection_string=\"\$Q_ARCHITECT_DB_CONNECTION_STRING\" image_tag=\$DOCKER_TAG_TO_UPDATE docker_registry_username=\"\$DOCKER_REGISTRY_USERNAME\" docker_registry_password=\"\$DOCKER_REGISTRY_PASSWORD\"\"'
+                }
+            }
+        }
+    }
+    post { 
+        success { 
+            slackSend(channel: "C05LB9KD9U7", message: "BUILD: ${env.JOB_NAME} number ${env.BUILD_ID} succeeded \nURL: ${env.RUN_DISPLAY_URL}", token: "Slack-Bot", color: "good")
+            emailext attachLog: true, 
+                     to: 'lior.mizrahi@q.ai, eran.roll@q.ai, ofir.rokach@q.ai, sean.galimidi@q.ai, $BUILD_USER@q.ai', 
+                     subject: 'A new version was successfully deployed',
+                     body: 'Version: $TAG_TO_DISTRIBUTE<br> Recording Stations: $JETFIRES_TO_UPDATE<br> Deployed by: $BUILD_USER<br> Jenkins URL: $RUN_DISPLAY_URL'
+        }
+        failure { 
+            slackSend(channel: "C05LB9KD9U7", message: "BUILD: ${env.JOB_NAME} number ${env.BUILD_ID} failed \nURL: ${env.RUN_DISPLAY_URL}", token: "Slack-Bot", color: "danger")
+            emailext attachLog: true, 
+                     to: 'lior.mizrahi@q.ai, eran.roll@q.ai, ofir.rokach@q.ai, sean.galimidi@q.ai, $BUILD_USER@q.ai', 
+                     subject: 'A new version failed to deploy', 
+                     body: 'Version: $TAG_TO_DISTRIBUTE<br> Recording Stations: $JETFIRES_TO_UPDATE<br> Deployed by: $BUILD_USER<br> Jenkins URL: $RUN_DISPLAY_URL'
+        }
+        aborted { 
+            slackSend(channel: "C05LB9KD9U7", message: "BUILD: ${env.JOB_NAME} number ${env.BUILD_ID} aborted \nURL: ${env.RUN_DISPLAY_URL}", token: "Slack-Bot", color: "warning")
+        }
+    }
+}

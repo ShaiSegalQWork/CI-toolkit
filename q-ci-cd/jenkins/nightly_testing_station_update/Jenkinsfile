@@ -1,0 +1,55 @@
+pipeline {
+    agent none
+
+    triggers {
+        cron('0 2 * * *')
+    }
+
+    stages {
+        stage('tag master as dev') {
+            agent any
+            steps {
+                checkout(
+                    [
+                        $class: 'GitSCM',
+                        branches: [[name: "master"]],
+                        doGenerateSubmoduleConfigurations: false,
+                        extensions: [
+                            [$class: 'CleanBeforeCheckout'],
+                            [$class: 'RelativeTargetDirectory', relativeTargetDir : 'q-andromeda']
+                        ],
+                        submoduleCfg: [],
+                        userRemoteConfigs: [[credentialsId: 'Jenkins-Master-User',url: 'git@github.com:Q-cue-ai/q-andromeda.git']],
+                    ]
+                )
+                dir('q-andromeda') {
+                    script {
+                        def latest_tag = sh(script: "git describe --tags --abbrev=0", returnStdout: true).trim()
+                        def result = latest_tag.split(/[rd-]/)[0]
+                        env.CUSTOM_TAG_NAME = "${result}dev${BUILD_NUMBER}"
+                    }
+                    sshagent(credentials: ['Jenkins-Master-User']) {
+                        sh "git tag -a ${CUSTOM_TAG_NAME} -m '${CUSTOM_TAG_NAME}'"
+                        sh "git push git@github.com:Q-cue-ai/q-andromeda.git ${CUSTOM_TAG_NAME}"
+                    }
+                }
+            }
+        }
+        stage('trigger build of andromeda') {
+            steps {
+                build job: 'q-andromeda/master', parameters: [
+                    string(name: 'INPUT_BRANCH_NAME', value: "${CUSTOM_TAG_NAME}")
+                ]
+            }
+        }
+        stage('trigger recorders and jrecorders update') {
+            steps {
+                build job: 'update recorders and jrecorders', parameters: [
+                    string(name: 'TAG_TO_DISTRIBUTE', value: "${CUSTOM_TAG_NAME}"),
+                    string(name: 'PARAMETER_RECORDERS_AND_JRECORDERS_TO_UPDATE', value: 'recorder23, 172.30.0.75, jrecorder25, 172.30.0.76')
+
+                ]
+            }
+        }
+    }
+}
